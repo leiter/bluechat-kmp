@@ -31,6 +31,8 @@
 	<dict/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Bluechat needs Bluetooth access to discover and communicate with nearby devices</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Bluechat needs Bluetooth access to advertise and accept connections from nearby devices</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
