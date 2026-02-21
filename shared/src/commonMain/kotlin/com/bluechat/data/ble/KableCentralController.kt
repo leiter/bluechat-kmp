@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 
 class KableCentralController : BleController {
@@ -103,7 +104,25 @@ class KableCentralController : BleController {
             }
         }.launchIn(scope)
 
-        p.connect()
+        val maxAttempts = 3
+        val backoffDelays = longArrayOf(1000L, 2000L, 4000L)
+        var lastException: Exception? = null
+
+        for (attempt in 0 until maxAttempts) {
+            try {
+                p.connect()
+                return
+            } catch (e: Exception) {
+                lastException = e
+                if (attempt < maxAttempts - 1) {
+                    delay(backoffDelays[attempt])
+                }
+            }
+        }
+
+        _connectionState.value = ConnectionState.Disconnected
+        peripheral = null
+        throw lastException!!
     }
 
     override suspend fun disconnect() {

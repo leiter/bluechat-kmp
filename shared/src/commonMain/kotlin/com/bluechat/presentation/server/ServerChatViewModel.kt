@@ -3,6 +3,8 @@ package com.bluechat.presentation.server
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bluechat.domain.model.ChatMessage
+import com.bluechat.domain.model.DeliveryStatus
+import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.BlePeripheralServer
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.presentation.chat.ChatUiState
@@ -20,6 +22,7 @@ class ServerChatViewModel(
     private val clientId: String,
     private val server: BlePeripheralServer,
     private val chatRepository: ChatRepository,
+    private val messageNotifier: MessageNotifier,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -46,6 +49,7 @@ class ServerChatViewModel(
                     timestamp = Clock.System.now().toEpochMilliseconds(),
                 )
                 chatRepository.insertMessage(message)
+                messageNotifier.showMessageNotification("Client", text)
             }
             .launchIn(viewModelScope)
     }
@@ -53,14 +57,20 @@ class ServerChatViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
-            server.sendTo(clientId, text)
             val message = ChatMessage(
                 deviceId = clientId,
                 message = text,
                 isFromLocalUser = true,
                 timestamp = Clock.System.now().toEpochMilliseconds(),
+                deliveryStatus = DeliveryStatus.Sending,
             )
-            chatRepository.insertMessage(message)
+            val id = chatRepository.insertMessage(message)
+            try {
+                server.sendTo(clientId, text)
+                chatRepository.updateMessageStatus(id, DeliveryStatus.Sent)
+            } catch (_: Exception) {
+                chatRepository.updateMessageStatus(id, DeliveryStatus.Failed)
+            }
         }
     }
 

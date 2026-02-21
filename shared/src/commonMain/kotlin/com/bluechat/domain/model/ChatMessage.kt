@@ -6,4 +6,5 @@ data class ChatMessage(
     val message: String,
     val isFromLocalUser: Boolean,
     val timestamp: Long = 0,
+    val deliveryStatus: DeliveryStatus = DeliveryStatus.Sent,
 )

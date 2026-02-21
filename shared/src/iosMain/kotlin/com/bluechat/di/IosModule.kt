@@ -3,6 +3,7 @@ package com.bluechat.di
 import com.bluechat.data.ble.IosBlePeripheralServer
 import com.bluechat.data.db.getDatabaseBuilder
 import com.bluechat.data.preferences.IosAppPreferences
+import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.BlePeripheralServer
 import org.koin.core.module.dsl.singleOf
@@ -13,4 +14,5 @@ val iosModule = module {
     single { getDatabaseBuilder() }
     singleOf(::IosBlePeripheralServer) bind BlePeripheralServer::class
     singleOf(::IosAppPreferences) bind AppPreferences::class
+    singleOf(::MessageNotifier)
 }

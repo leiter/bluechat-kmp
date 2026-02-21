@@ -11,4 +11,5 @@ data class ChatMessageEntity(
     val message: String,
     val isFromLocalUser: Boolean,
     val timestamp: Long,
+    val deliveryStatus: String = "Sent",
 )

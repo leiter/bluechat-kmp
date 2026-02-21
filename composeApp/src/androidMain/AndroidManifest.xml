@@ -14,6 +14,9 @@
     <!-- Location required for BLE scanning on API < 31 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Notifications (API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".BluechatApp"
         android:allowBackup="true"

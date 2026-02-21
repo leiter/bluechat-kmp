@@ -18,23 +18,40 @@ import android.os.ParcelUuid
 import android.util.Log
 import com.bluechat.domain.model.ConnectedClient
 import com.bluechat.domain.model.ServerState
+import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.BlePeripheralServer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
 class AndroidBlePeripheralServer(
     private val context: Context,
+    appPreferences: AppPreferences,
 ) : BlePeripheralServer {
 
     companion object {
         private const val TAG = "BlePeripheralServer"
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var currentDisplayName: String = "Bluechat"
+
+    init {
+        appPreferences.displayName
+            .onEach { currentDisplayName = it }
+            .launchIn(scope)
     }
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -192,6 +209,8 @@ class AndroidBlePeripheralServer(
             return
         }
 
+        bluetoothAdapter.name = currentDisplayName
+
         initService()
 
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
@@ -244,5 +263,6 @@ class AndroidBlePeripheralServer(
 
     override fun release() {
         stopAdvertising()
+        scope.cancel()
     }
 }

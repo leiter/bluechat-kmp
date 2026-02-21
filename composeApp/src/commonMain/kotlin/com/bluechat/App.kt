@@ -12,6 +12,7 @@ import com.bluechat.presentation.chat.ChatScreen
 import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.device.DeviceScreen
 import com.bluechat.presentation.device.DeviceViewModel
+import com.bluechat.presentation.server.BroadcastChatViewModel
 import com.bluechat.presentation.server.ServerChatViewModel
 import com.bluechat.presentation.server.ServerScreen
 import com.bluechat.presentation.server.ServerViewModel
@@ -84,6 +85,9 @@ fun App() {
                     onClientClicked = { clientId ->
                         navController.navigate("server/chat/$clientId")
                     },
+                    onGroupChatClicked = {
+                        navController.navigate("server/broadcast")
+                    },
                     onBack = {
                         viewModel.stopServer()
                         navController.popBackStack()
@@ -94,6 +98,20 @@ fun App() {
             composable("server/chat/{clientId}") { backStackEntry ->
                 val clientId = backStackEntry.arguments?.read { getStringOrNull("clientId") } ?: return@composable
                 val viewModel = koinViewModel<ServerChatViewModel>(parameters = { parametersOf(clientId) })
+                val state by viewModel.state.collectAsStateWithLifecycle()
+
+                ChatScreen(
+                    state = state,
+                    onSendMessage = viewModel::sendMessage,
+                    onDisconnect = {
+                        viewModel.disconnect()
+                        navController.popBackStack()
+                    },
+                )
+            }
+
+            composable("server/broadcast") {
+                val viewModel = koinViewModel<BroadcastChatViewModel>()
                 val state by viewModel.state.collectAsStateWithLifecycle()
 
                 ChatScreen(
