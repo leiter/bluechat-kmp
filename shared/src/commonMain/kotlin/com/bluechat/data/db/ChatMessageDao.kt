@@ -11,7 +11,10 @@ interface ChatMessageDao {
     fun getMessagesForDevice(deviceId: String): Flow<List<ChatMessageEntity>>
 
     @Insert
-    suspend fun insert(message: ChatMessageEntity)
+    suspend fun insert(message: ChatMessageEntity): Long
+
+    @Query("UPDATE chat_messages SET deliveryStatus = :status WHERE id = :id")
+    suspend fun updateMessageStatus(id: Long, status: String)
 
     @Query("DELETE FROM chat_messages WHERE deviceId = :deviceId")
     suspend fun deleteMessagesForDevice(deviceId: String)

@@ -37,6 +37,7 @@ fun ServerScreen(
     onStartServer: () -> Unit,
     onStopServer: () -> Unit,
     onClientClicked: (String) -> Unit,
+    onGroupChatClicked: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -108,6 +109,15 @@ fun ServerScreen(
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = onGroupChatClicked,
+                enabled = state.isAdvertising,
+            ) {
+                Text("Group Chat")
             }
 
             Spacer(Modifier.height(16.dp))

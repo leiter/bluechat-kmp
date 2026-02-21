@@ -8,6 +8,7 @@ import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.device.DeviceViewModel
+import com.bluechat.presentation.server.BroadcastChatViewModel
 import com.bluechat.presentation.server.ServerChatViewModel
 import com.bluechat.presentation.server.ServerViewModel
 import com.bluechat.presentation.settings.SettingsViewModel
@@ -24,8 +25,9 @@ val sharedModule = module {
     singleOf(::KableCentralController) bind BleController::class
 
     viewModelOf(::DeviceViewModel)
-    viewModel { params -> ChatViewModel(params.get(), get(), get()) }
+    viewModel { params -> ChatViewModel(params.get(), get(), get(), get()) }
     viewModelOf(::ServerViewModel)
-    viewModel { params -> ServerChatViewModel(params.get(), get(), get()) }
+    viewModel { params -> ServerChatViewModel(params.get(), get(), get(), get()) }
+    viewModelOf(::BroadcastChatViewModel)
     viewModelOf(::SettingsViewModel)
 }

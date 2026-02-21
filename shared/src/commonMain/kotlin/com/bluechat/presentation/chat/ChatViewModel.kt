@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.ConnectionState
+import com.bluechat.domain.model.DeliveryStatus
+import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +21,7 @@ class ChatViewModel(
     private val deviceId: String,
     private val bleController: BleController,
     private val chatRepository: ChatRepository,
+    private val messageNotifier: MessageNotifier,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -46,6 +49,7 @@ class ChatViewModel(
                     timestamp = Clock.System.now().toEpochMilliseconds(),
                 )
                 chatRepository.insertMessage(message)
+                messageNotifier.showMessageNotification("Remote", text)
             }
             .launchIn(viewModelScope)
     }
@@ -53,14 +57,20 @@ class ChatViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
-            bleController.send(text)
             val message = ChatMessage(
                 deviceId = deviceId,
                 message = text,
                 isFromLocalUser = true,
                 timestamp = Clock.System.now().toEpochMilliseconds(),
+                deliveryStatus = DeliveryStatus.Sending,
             )
-            chatRepository.insertMessage(message)
+            val id = chatRepository.insertMessage(message)
+            try {
+                bleController.send(text)
+                chatRepository.updateMessageStatus(id, DeliveryStatus.Sent)
+            } catch (_: Exception) {
+                chatRepository.updateMessageStatus(id, DeliveryStatus.Failed)
+            }
         }
     }
 

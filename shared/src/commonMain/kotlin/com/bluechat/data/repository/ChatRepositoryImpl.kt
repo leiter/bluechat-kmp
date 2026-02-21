@@ -3,6 +3,7 @@ package com.bluechat.data.repository
 import com.bluechat.data.db.ChatMessageDao
 import com.bluechat.data.db.ChatMessageEntity
 import com.bluechat.domain.model.ChatMessage
+import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.domain.repository.ChatRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -17,8 +18,12 @@ class ChatRepositoryImpl(
         }
     }
 
-    override suspend fun insertMessage(message: ChatMessage) {
-        dao.insert(message.toEntity())
+    override suspend fun insertMessage(message: ChatMessage): Long {
+        return dao.insert(message.toEntity())
+    }
+
+    override suspend fun updateMessageStatus(id: Long, status: DeliveryStatus) {
+        dao.updateMessageStatus(id, status.name)
     }
 
     override suspend fun deleteMessagesForDevice(deviceId: String) {
@@ -32,6 +37,7 @@ private fun ChatMessageEntity.toDomain() = ChatMessage(
     message = message,
     isFromLocalUser = isFromLocalUser,
     timestamp = timestamp,
+    deliveryStatus = try { DeliveryStatus.valueOf(deliveryStatus) } catch (_: Exception) { DeliveryStatus.Sent },
 )
 
 private fun ChatMessage.toEntity() = ChatMessageEntity(
@@ -40,4 +46,5 @@ private fun ChatMessage.toEntity() = ChatMessageEntity(
     message = message,
     isFromLocalUser = isFromLocalUser,
     timestamp = timestamp,
+    deliveryStatus = deliveryStatus.name,
 )
