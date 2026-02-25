@@ -70,12 +70,14 @@ class DeviceViewModelTest {
         viewModel = createViewModel()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.startScan()
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        assertTrue(fakeBleController.scanStarted)
-
         viewModel.state.test {
+            awaitItem() // initial state
+
+            viewModel.startScan()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            assertTrue(fakeBleController.scanStarted)
+
             val state = awaitItem()
             assertTrue(state.isScanning)
             cancelAndIgnoreRemainingEvents()
@@ -126,12 +128,14 @@ class DeviceViewModelTest {
         viewModel = createViewModel()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.connectToDevice("device-1")
-        testDispatcher.scheduler.advanceUntilIdle()
-
-        assertEquals("device-1", fakeBleController.connectedDeviceId)
-
         viewModel.state.test {
+            awaitItem() // initial state
+
+            viewModel.connectToDevice("device-1")
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            assertEquals("device-1", fakeBleController.connectedDeviceId)
+
             val state = awaitItem()
             assertEquals("device-1", state.connectedDeviceId)
             cancelAndIgnoreRemainingEvents()
@@ -144,11 +148,17 @@ class DeviceViewModelTest {
         viewModel = createViewModel()
         testDispatcher.scheduler.advanceUntilIdle()
 
-        viewModel.connectToDevice("device-1")
-        testDispatcher.scheduler.advanceUntilIdle()
-
         viewModel.state.test {
-            val state = awaitItem()
+            awaitItem() // initial state
+
+            viewModel.connectToDevice("device-1")
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            // Wait for state with error message (may take a few emissions)
+            var state = awaitItem()
+            while (state.errorMessage == null) {
+                state = awaitItem()
+            }
             assertEquals("Connection failed", state.errorMessage)
             cancelAndIgnoreRemainingEvents()
         }
