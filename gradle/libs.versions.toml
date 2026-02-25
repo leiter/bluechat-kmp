@@ -10,6 +10,7 @@ navigation = "2.9.2"
 room = "2.7.1"
 sqlite = "2.5.0"
 activity-compose = "1.10.1"
+kable = "0.40.0"
 android-compileSdk = "36"
 android-minSdk = "24"
 android-targetSdk = "35"
@@ -41,8 +42,13 @@ sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sql
 # Android
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 
-# Kable (resolved via composite build)
-kable-core = { module = "com.juul.kable:kable-core" }
+# Kable
+kable-core = { module = "com.juul.kable:kable-core", version.ref = "kable" }
+
+# Testing
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+turbine = { module = "app.cash.turbine:turbine", version = "1.2.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

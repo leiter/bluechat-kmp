@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bluechat.domain.model.ConnectionState
 import com.bluechat.domain.repository.BleController
+import com.bluechat.domain.repository.FavoriteDeviceRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -15,6 +16,7 @@ import kotlinx.coroutines.launch
 
 class DeviceViewModel(
     private val bleController: BleController,
+    private val favoriteDeviceRepository: FavoriteDeviceRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DeviceUiState())
@@ -23,11 +25,15 @@ class DeviceViewModel(
         _state,
         bleController.scannedDevices,
         bleController.connectionState,
-    ) { state, devices, connState ->
+        favoriteDeviceRepository.getAllFavorites(),
+    ) { state, devices, connState, favorites ->
+        val favoriteIds = favorites.map { it.identifier }.toSet()
         state.copy(
             scannedDevices = devices,
             isConnecting = connState == ConnectionState.Connecting,
             isConnected = connState == ConnectionState.Connected,
+            favoriteDevices = favorites,
+            favoriteDeviceIds = favoriteIds,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DeviceUiState())
 
@@ -64,6 +70,12 @@ class DeviceViewModel(
         viewModelScope.launch {
             bleController.disconnect()
             _state.update { it.copy(connectedDeviceId = null) }
+        }
+    }
+
+    fun toggleFavorite(deviceId: String, deviceName: String?) {
+        viewModelScope.launch {
+            favoriteDeviceRepository.toggleFavorite(deviceId, deviceName)
         }
     }
 

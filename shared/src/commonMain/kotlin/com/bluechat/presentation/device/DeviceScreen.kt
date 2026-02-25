@@ -29,6 +29,7 @@ fun DeviceScreen(
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onDeviceClicked: (String) -> Unit,
+    onToggleFavorite: (deviceId: String, deviceName: String?) -> Unit = { _, _ -> },
     onStartServer: () -> Unit = {},
     onSettingsClicked: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -93,10 +94,45 @@ fun DeviceScreen(
         }
 
         LazyColumn(modifier = Modifier.weight(1f)) {
+            if (state.favoriteDevices.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Favorites",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+                items(state.favoriteDevices) { favorite ->
+                    DeviceListItem(
+                        device = com.bluechat.domain.model.BleDevice(
+                            identifier = favorite.identifier,
+                            name = favorite.name,
+                            rssi = null,
+                        ),
+                        onClick = { onDeviceClicked(favorite.identifier) },
+                        isFavorite = true,
+                        onFavoriteClick = { onToggleFavorite(favorite.identifier, favorite.name) },
+                    )
+                    HorizontalDivider()
+                }
+                item {
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+
+            item {
+                Text(
+                    text = "Nearby Devices",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             items(state.scannedDevices) { device ->
                 DeviceListItem(
                     device = device,
                     onClick = { onDeviceClicked(device.identifier) },
+                    isFavorite = device.identifier in state.favoriteDeviceIds,
+                    onFavoriteClick = { onToggleFavorite(device.identifier, device.name) },
                 )
                 HorizontalDivider()
             }
