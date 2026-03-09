@@ -15,7 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-includeBuild("../kable")
-
 include(":composeApp")
 include(":shared")

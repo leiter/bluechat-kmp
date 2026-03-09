@@ -25,7 +25,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":shared"))
+            api(project(":shared"))
             @Suppress("DEPRECATION")
             implementation(compose.runtime)
             @Suppress("DEPRECATION")
