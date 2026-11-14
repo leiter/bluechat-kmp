@@ -5,6 +5,12 @@
         android:name="android.hardware.bluetooth_le"
         android:required="true" />
 
+    <!-- Legacy Bluetooth permissions (API <= 30) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
     <!-- BLE permissions (API 31+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />

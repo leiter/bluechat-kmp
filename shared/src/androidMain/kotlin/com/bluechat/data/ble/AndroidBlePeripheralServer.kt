@@ -193,6 +193,15 @@ class AndroidBlePeripheralServer(
         )
         messageCharacteristic.addDescriptor(messageDescriptor)
 
+        // Standard Client Characteristic Configuration Descriptor (CCCD), required
+        // by GATT clients (incl. kable) to enable notifications.
+        messageCharacteristic.addDescriptor(
+            BluetoothGattDescriptor(
+                UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"),
+                BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE,
+            )
+        )
+
         service.addCharacteristic(messageCharacteristic)
         gattServer?.addService(service)
     }

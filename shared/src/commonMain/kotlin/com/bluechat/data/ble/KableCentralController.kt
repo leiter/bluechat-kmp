@@ -7,6 +7,7 @@ import com.juul.kable.Advertisement
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
 import com.juul.kable.State
+import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -132,7 +133,7 @@ class KableCentralController : BleController {
 
     override suspend fun send(message: String) {
         val p = peripheral ?: return
-        p.write(messageCharacteristic, message.encodeToByteArray())
+        p.write(messageCharacteristic, message.encodeToByteArray(), WriteType.WithResponse)
     }
 
     override fun release() {
