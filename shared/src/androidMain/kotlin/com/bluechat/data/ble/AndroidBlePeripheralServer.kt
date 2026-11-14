@@ -10,6 +10,11 @@ import android.bluetooth.BluetoothGattServerCallback
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED
+import android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE
+import android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED
+import android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_INTERNAL_ERROR
+import android.bluetooth.le.AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.bluetooth.le.BluetoothLeAdvertiser
@@ -24,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
@@ -43,10 +50,19 @@ class AndroidBlePeripheralServer(
 
     companion object {
         private const val TAG = "BlePeripheralServer"
+        private const val DEFAULT_DISPLAY_NAME = "Bluechat"
+        private const val MAX_ADVERTISED_NAME_LENGTH = 26
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var currentDisplayName: String = "Bluechat"
+
+    // Written from a background coroutine, read when advertising starts: must be @Volatile
+    // or the starting thread can observe a stale name.
+    @Volatile
+    private var currentDisplayName: String = DEFAULT_DISPLAY_NAME
+
+    /** The adapter name we found before we first overwrote it, so we can put it back. */
+    private var originalAdapterName: String? = null
 
     init {
         appPreferences.displayName
@@ -60,6 +76,9 @@ class AndroidBlePeripheralServer(
     private var gattServer: BluetoothGattServer? = null
 
     private val connectedDevices = mutableListOf<BluetoothDevice>()
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    override val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
     private val _serverState = MutableStateFlow(ServerState.Idle)
     override val serverState: StateFlow<ServerState> = _serverState.asStateFlow()
@@ -150,11 +169,24 @@ class AndroidBlePeripheralServer(
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
             Log.i(TAG, "Advertising started successfully")
+            _lastError.value = null
             _serverState.value = ServerState.Advertising
         }
 
         override fun onStartFailure(errorCode: Int) {
-            Log.e(TAG, "Advertising failed: $errorCode")
+            val reason = when (errorCode) {
+                ADVERTISE_FAILED_DATA_TOO_LARGE ->
+                    "Advertisement payload too large. Try a shorter display name."
+                ADVERTISE_FAILED_TOO_MANY_ADVERTISERS ->
+                    "Too many apps are advertising right now. Try again shortly."
+                ADVERTISE_FAILED_ALREADY_STARTED -> "Already advertising."
+                ADVERTISE_FAILED_INTERNAL_ERROR -> "Internal Bluetooth error."
+                ADVERTISE_FAILED_FEATURE_UNSUPPORTED ->
+                    "This device does not support BLE advertising."
+                else -> "Advertising failed (code $errorCode)."
+            }
+            Log.e(TAG, "Advertising failed: $errorCode - $reason")
+            _lastError.value = reason
             _serverState.value = ServerState.Error
         }
     }
@@ -218,8 +250,37 @@ class AndroidBlePeripheralServer(
             return
         }
 
-        bluetoothAdapter.name = currentDisplayName
+        // Renaming the adapter is applied asynchronously by the Bluetooth stack. Starting to
+        // advertise immediately afterwards captured the OLD name in the payload, so a changed
+        // display name only appeared after an app restart. Wait for the rename to land first.
+        scope.launch {
+            applyDisplayName(currentDisplayName)
+            startAdvertisingNow()
+        }
+    }
 
+    /**
+     * Sets the adapter name and waits (briefly) for the stack to report it back. Note this is
+     * the phone's system-wide Bluetooth name; [stopAdvertising] restores the original.
+     */
+    private suspend fun applyDisplayName(rawName: String) {
+        if (rawName.isBlank()) return
+        // Leave room for the AD header in the 31-byte scan response.
+        val name = rawName.take(MAX_ADVERTISED_NAME_LENGTH)
+        if (originalAdapterName == null) {
+            originalAdapterName = runCatching { bluetoothAdapter.name }.getOrNull()
+        }
+        if (runCatching { bluetoothAdapter.name }.getOrNull() == name) return
+
+        bluetoothAdapter.name = name
+        repeat(20) {
+            if (runCatching { bluetoothAdapter.name }.getOrNull() == name) return
+            delay(50)
+        }
+        Log.w(TAG, "Adapter name did not settle on '$name' before advertising")
+    }
+
+    private fun startAdvertisingNow() {
         initService()
 
         advertiser = bluetoothAdapter.bluetoothLeAdvertiser
@@ -231,12 +292,21 @@ class AndroidBlePeripheralServer(
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
             .build()
 
+        // A 128-bit service UUID already eats 18 of the 31 advertisement bytes, so the
+        // device name does not fit alongside it -- anything longer than ~8 characters used
+        // to fail outright with ADVERTISE_FAILED_DATA_TOO_LARGE. Carry the name in the scan
+        // response instead, which gets its own 31-byte budget; Android merges the two for
+        // scanners, so the name still shows up in results.
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(serviceUuid))
             .build()
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .build()
+
+        advertiser?.startAdvertising(settings, data, scanResponse, advertiseCallback)
     }
 
     override fun stopAdvertising() {
@@ -246,6 +316,12 @@ class AndroidBlePeripheralServer(
         connectedDevices.clear()
         updateConnectedClients()
         _serverState.value = ServerState.Idle
+
+        // Don't leave the user's phone permanently renamed to our display name.
+        originalAdapterName?.let { original ->
+            runCatching { bluetoothAdapter.name = original }
+            originalAdapterName = null
+        }
     }
 
     override suspend fun sendToAll(message: String) {

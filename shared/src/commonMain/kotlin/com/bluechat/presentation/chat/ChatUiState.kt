@@ -8,4 +8,5 @@ data class ChatUiState(
     val isConnected: Boolean = true,
     val deviceName: String? = null,
     val connectionState: ConnectionState = ConnectionState.Connected,
+    val errorMessage: String? = null,
 )

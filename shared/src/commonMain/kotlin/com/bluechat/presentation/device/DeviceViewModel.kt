@@ -7,8 +7,6 @@ import com.bluechat.domain.repository.BleController
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,24 +21,21 @@ class DeviceViewModel(
         _state,
         bleController.scannedDevices,
         bleController.connectionState,
-    ) { state, devices, connState ->
+        bleController.lastError,
+    ) { state, devices, connState, error ->
         state.copy(
             scannedDevices = devices,
             isConnecting = connState == ConnectionState.Connecting,
             isConnected = connState == ConnectionState.Connected,
+            // A scan that dies (missing permission, Bluetooth off, location off) otherwise
+            // looks exactly like "no devices nearby".
+            errorMessage = error ?: state.errorMessage,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DeviceUiState())
 
-    init {
-        bleController.connectionState.onEach { connState ->
-            if (connState == ConnectionState.Connected) {
-                _state.update { it.copy(connectedDeviceId = it.connectedDeviceId) }
-            }
-        }.launchIn(viewModelScope)
-    }
-
     fun startScan() {
-        _state.update { it.copy(isScanning = true) }
+        _state.update { it.copy(isScanning = true, errorMessage = null) }
+        bleController.clearError()
         bleController.startScan()
     }
 
@@ -50,12 +45,13 @@ class DeviceViewModel(
     }
 
     fun connectToDevice(deviceId: String) {
-        _state.update { it.copy(connectedDeviceId = deviceId) }
+        _state.update { it.copy(connectedDeviceId = deviceId, errorMessage = null) }
+        bleController.clearError()
         viewModelScope.launch {
             try {
                 bleController.connect(deviceId)
             } catch (e: Exception) {
-                _state.update { it.copy(errorMessage = e.message) }
+                _state.update { it.copy(errorMessage = it.errorMessage ?: e.message) }
             }
         }
     }
@@ -67,8 +63,7 @@ class DeviceViewModel(
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        bleController.release()
-    }
+    // NOTE: deliberately no release() here. BleController is an application-scoped singleton;
+    // releasing it when this screen's ViewModel is cleared cancelled its coroutine scope for
+    // good, leaving scanning and messaging dead for the rest of the process.
 }

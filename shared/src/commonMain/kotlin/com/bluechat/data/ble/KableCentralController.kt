@@ -11,19 +11,21 @@ import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 
 class KableCentralController : BleController {
@@ -41,8 +43,16 @@ class KableCentralController : BleController {
     private val _connectionState = MutableStateFlow(ConnectionState.Disconnected)
     override val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
+    private val _lastError = MutableStateFlow<String?>(null)
+    override val lastError: StateFlow<String?> = _lastError.asStateFlow()
+
+    /** The peripheral we are connected to, paired with its identifier. */
+    private val _connection = MutableStateFlow<Pair<String, Peripheral>?>(null)
+
+    private val _connectedDeviceId = MutableStateFlow<String?>(null)
+    override val connectedDeviceId: StateFlow<String?> = _connectedDeviceId.asStateFlow()
+
     private var scanJob: Job? = null
-    private var peripheral: Peripheral? = null
     private val advertisementCache = mutableMapOf<String, Advertisement>()
 
     private val scanner = Scanner {
@@ -53,14 +63,30 @@ class KableCentralController : BleController {
         }
     }
 
-    override val incomingMessages: Flow<ByteArray>
-        get() = peripheral?.observe(messageCharacteristic) ?: emptyFlow()
+    /**
+     * Follows whichever peripheral is currently connected. Collecting this before a connection
+     * exists is safe: it simply produces nothing until one exists, then switches over. The
+     * previous `get()`-based version captured a null peripheral once and stayed empty forever.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override val incomingMessages: Flow<Pair<String, ByteArray>> =
+        _connection.flatMapLatest { entry ->
+            if (entry == null) {
+                emptyFlow()
+            } else {
+                val (deviceId, peripheral) = entry
+                peripheral.observe(messageCharacteristic)
+                    .map { data -> deviceId to data }
+                    .catch { e -> _lastError.value = "Lost message stream: ${e.message}" }
+            }
+        }
 
     override fun startScan() {
         if (scanJob?.isActive == true) return
 
         _scannedDevices.value = emptyList()
         advertisementCache.clear()
+        _lastError.value = null
 
         scanJob = scanner.advertisements
             .onEach { advertisement ->
@@ -80,7 +106,11 @@ class KableCentralController : BleController {
                     }
                 }
             }
-            .catch { /* scan ended or error */ }
+            .catch { e ->
+                // Never swallow this: a failed scan is otherwise indistinguishable from
+                // "no devices nearby", which is extremely hard to diagnose.
+                _lastError.value = "Scan failed: ${e.message ?: e::class.simpleName}"
+            }
             .launchIn(scope)
     }
 
@@ -89,12 +119,24 @@ class KableCentralController : BleController {
         scanJob = null
     }
 
+    override fun clearError() {
+        _lastError.value = null
+    }
+
     override suspend fun connect(deviceId: String) {
-        val advertisement = advertisementCache[deviceId] ?: return
+        val advertisement = advertisementCache[deviceId]
+        if (advertisement == null) {
+            _lastError.value = "Device is no longer in range. Scan again."
+            _connectionState.value = ConnectionState.Disconnected
+            return
+        }
+
+        _lastError.value = null
         _connectionState.value = ConnectionState.Connecting
 
         val p = Peripheral(advertisement)
-        peripheral = p
+        _connection.value = deviceId to p
+        _connectedDeviceId.value = deviceId
 
         p.state.onEach { state ->
             _connectionState.value = when (state) {
@@ -122,17 +164,37 @@ class KableCentralController : BleController {
         }
 
         _connectionState.value = ConnectionState.Disconnected
-        peripheral = null
+        _connection.value = null
+        _connectedDeviceId.value = null
+        _lastError.value = describeConnectFailure(lastException)
         throw lastException!!
     }
 
+    /**
+     * A stale GATT service cache on a bonded device is by far the most common cause of a
+     * "service not found" failure, and the raw exception gives the user no hint, so spell
+     * the recovery out instead.
+     */
+    private fun describeConnectFailure(cause: Exception?): String {
+        val serviceMissing = generateSequence(cause as Throwable?) { it.cause }
+            .any { it.message?.contains("not found", ignoreCase = true) == true }
+        return if (serviceMissing) {
+            "Could not find the chat service on this device. If the two phones are paired, " +
+                "Android may be serving a stale GATT cache - unpair them and try again."
+        } else {
+            val detail = cause?.message ?: cause?.let { it::class.simpleName } ?: "unknown error"
+            "Connection failed after 3 attempts: $detail"
+        }
+    }
+
     override suspend fun disconnect() {
-        peripheral?.disconnect()
-        peripheral = null
+        _connection.value?.second?.disconnect()
+        _connection.value = null
+        _connectedDeviceId.value = null
     }
 
     override suspend fun send(message: String) {
-        val p = peripheral ?: return
+        val p = _connection.value?.second ?: error("Not connected")
         p.write(messageCharacteristic, message.encodeToByteArray(), WriteType.WithResponse)
     }
 

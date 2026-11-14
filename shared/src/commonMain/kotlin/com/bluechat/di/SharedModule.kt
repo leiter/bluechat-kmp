@@ -4,6 +4,7 @@ import com.bluechat.data.ble.KableCentralController
 import com.bluechat.data.db.ChatDatabase
 import com.bluechat.data.db.createDatabase
 import com.bluechat.data.repository.ChatRepositoryImpl
+import com.bluechat.domain.messaging.IncomingMessageCoordinator
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.presentation.chat.ChatViewModel
@@ -23,11 +24,12 @@ val sharedModule = module {
     single { get<ChatDatabase>().chatMessageDao() }
     singleOf(::ChatRepositoryImpl) bind ChatRepository::class
     singleOf(::KableCentralController) bind BleController::class
+    singleOf(::IncomingMessageCoordinator)
 
     viewModelOf(::DeviceViewModel)
-    viewModel { params -> ChatViewModel(params.get(), get(), get(), get()) }
+    viewModel { params -> ChatViewModel(params.get(), get(), get()) }
     viewModelOf(::ServerViewModel)
-    viewModel { params -> ServerChatViewModel(params.get(), get(), get(), get()) }
+    viewModel { params -> ServerChatViewModel(params.get(), get(), get()) }
     viewModelOf(::BroadcastChatViewModel)
     viewModelOf(::SettingsViewModel)
 }

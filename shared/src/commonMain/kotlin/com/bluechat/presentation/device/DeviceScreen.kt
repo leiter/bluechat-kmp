@@ -12,17 +12,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.bluechat.presentation.components.DeviceListItem
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceScreen(
     state: DeviceUiState,
@@ -33,72 +37,76 @@ fun DeviceScreen(
     onSettingsClicked: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.fillMaxSize().padding(16.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Nearby Devices",
-                style = MaterialTheme.typography.headlineMedium,
+    // A Scaffold (rather than a bare Column) is what keeps this screen below the status bar
+    // and gives it the themed background. Without it the settings button sat underneath the
+    // system status bar and could not be tapped, and the screen rendered light in dark mode.
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Nearby Devices") },
+                actions = {
+                    IconButton(onClick = onSettingsClicked) {
+                        Text("⚙", style = MaterialTheme.typography.headlineSmall)
+                    }
+                },
             )
-            IconButton(onClick = onSettingsClicked) {
-                Text("\u2699", style = MaterialTheme.typography.headlineSmall)
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        },
+        modifier = modifier,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp),
         ) {
-            Button(onClick = onStartScan, enabled = !state.isScanning) {
-                Text("Start Scan")
-            }
-            Button(onClick = onStopScan, enabled = state.isScanning) {
-                Text("Stop Scan")
-            }
-            OutlinedButton(onClick = onStartServer) {
-                Text("Server Mode")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        if (state.isConnecting) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                CircularProgressIndicator()
-                Text(
-                    text = "Connecting...",
-                    modifier = Modifier.padding(start = 8.dp),
-                )
+                Button(onClick = onStartScan, enabled = !state.isScanning) {
+                    Text("Start Scan")
+                }
+                Button(onClick = onStopScan, enabled = state.isScanning) {
+                    Text("Stop Scan")
+                }
+                OutlinedButton(onClick = onStartServer) {
+                    Text("Server Mode")
+                }
             }
-            Spacer(Modifier.height(8.dp))
-        }
 
-        state.errorMessage?.let { error ->
-            Text(
-                text = error,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-            )
             Spacer(Modifier.height(8.dp))
-        }
 
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(state.scannedDevices) { device ->
-                DeviceListItem(
-                    device = device,
-                    onClick = { onDeviceClicked(device.identifier) },
+            if (state.isConnecting) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator()
+                    Text(
+                        text = "Connecting...",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            state.errorMessage?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
                 )
-                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+            }
+
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(state.scannedDevices) { device ->
+                    DeviceListItem(
+                        device = device,
+                        onClick = { onDeviceClicked(device.identifier) },
+                    )
+                    HorizontalDivider()
+                }
             }
         }
     }

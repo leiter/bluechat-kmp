@@ -9,6 +9,10 @@ interface BlePeripheralServer {
     val serverState: StateFlow<ServerState>
     val connectedClients: StateFlow<List<ConnectedClient>>
     val incomingMessages: Flow<Pair<String, ByteArray>> // (clientId, data)
+
+    /** Human-readable reason the server could not start, or `null` if there is none. */
+    val lastError: StateFlow<String?>
+
     fun startAdvertising()
     fun stopAdvertising()
     suspend fun sendToAll(message: String)
