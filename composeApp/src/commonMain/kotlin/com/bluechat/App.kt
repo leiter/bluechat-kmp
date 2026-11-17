@@ -88,10 +88,10 @@ fun App() {
                     onGroupChatClicked = {
                         navController.navigate("server/broadcast")
                     },
-                    onBack = {
-                        viewModel.stopServer()
-                        navController.popBackStack()
-                    },
+                    // Leaving the screen deliberately does NOT stop the server: the
+                    // foreground service keeps it advertising in the background. Stopping is
+                    // now an explicit act, via the button here or the notification action.
+                    onBack = { navController.popBackStack() },
                 )
             }
 

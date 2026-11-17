@@ -203,3 +203,44 @@ messaging permanently dead.
   Pixel 2 and scanning returned zero results. Now that defect #5 is fixed the scan failure is at
   least reported instead of looking like an empty room, but the app still does not check the
   location-services setting up front.
+
+---
+
+## Found while implementing E1 (2026-11-17)
+
+### 11. Leaving the Server Mode screen stopped the server — FIXED
+
+**Where:** `App.kt`, the `"server"` destination's `onBack`
+
+`onBack` called `viewModel.stopServer()` before popping the back stack, so backing out of
+Server Mode tore down advertising. Harmless while nothing survived backgrounding anyway;
+directly at odds with a foreground service that exists to keep the session alive.
+
+**Fixed by:** `onBack` now only pops. Stopping is explicit -- the Stop Server button or the
+notification's Stop action.
+
+**Re-verified:** with the server running, pressing Back and then Home left
+`isForeground=true types=0x00000010` and the Pixel 2 still discovered and connected to the
+backgrounded app.
+
+### 12. The scan list is never cleared between scans — OPEN, minor
+
+**Where:** `DeviceViewModel` / `KableCentralController.scannedDevices`
+
+After the server stopped advertising, a fresh scan on the Pixel 2 still listed "Bluechat" at
+-57 dBm. Force-stopping the app and scanning again returned nothing, confirming the entry was
+stale state rather than a live advertisement.
+
+**Consequence:** the device list shows peers that are no longer reachable, and tapping one
+leads to a connect attempt that can only fail. Worth clearing on `startScan()`, and worth
+ageing entries out by `lastSeenAt` once B5 (presence) lands.
+
+---
+
+## Platform behaviour worth knowing
+
+- **Android 14+ lets users swipe away a foreground-service notification** without stopping the
+  service. Observed directly: the "Bluechat is active" notification was dismissed while
+  `dumpsys` still reported `isForeground=true`, and it reappeared on the next session change.
+  The service is not harmed by this, but the user can lose their only visible handle on it, so
+  E5 (connection-state UX) should surface session state in-app as well.

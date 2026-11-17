@@ -9,6 +9,7 @@ import com.bluechat.domain.messaging.IncomingMessageCoordinator
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.domain.repository.PeerDirectory
+import com.bluechat.domain.session.BleSessionMonitor
 import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.device.DeviceViewModel
 import com.bluechat.presentation.server.BroadcastChatViewModel
@@ -29,6 +30,7 @@ val sharedModule = module {
     singleOf(::PeerDirectoryImpl) bind PeerDirectory::class
     singleOf(::KableCentralController) bind BleController::class
     singleOf(::IncomingMessageCoordinator)
+    singleOf(::BleSessionMonitor)
 
     viewModelOf(::DeviceViewModel)
     viewModel { params -> ChatViewModel(params.get(), get(), get(), get()) }

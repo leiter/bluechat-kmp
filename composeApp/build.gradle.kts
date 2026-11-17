@@ -48,6 +48,8 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.activity.compose)
             implementation(libs.koin.android)
+            // ServiceCompat / NotificationCompat for the foreground session service.
+            implementation(libs.androidx.core)
         }
     }
 }

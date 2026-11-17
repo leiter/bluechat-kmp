@@ -132,9 +132,12 @@ identity broadcast — see defect #7 in the test findings.
 
 This is what makes the app *feel* like a chat app rather than a demo.
 
-- **E1. Foreground service** owning the GATT server and active connections. Today everything
-  lives in Activity-scoped objects, so backgrounding the app stops messaging entirely. This is
-  the biggest gap after identity.
+- **E1. Foreground service** owning the GATT server and active connections. **DONE
+  (2026-11-17).** `BluechatService` (`composeApp/androidMain/service/`) runs with
+  `foregroundServiceType="connectedDevice"` for as long as a session is live, driven by the
+  new `BleSessionMonitor` in `commonMain`. The service owns no BLE state: it watches one
+  folded `StateFlow`, mirrors it into an ongoing notification, and stops itself the moment the
+  session goes idle. Leaving the Server Mode screen no longer stops the server.
 - **E2. Auto-reconnect to known contacts.** Background scan, connect on sight, drain the outbox.
 - **E3. Simultaneous central + peripheral.** Currently a mode switch — one phone must be
   explicitly told to be "Server Mode". A standard chat app is both roles at once, so any two
@@ -163,9 +166,9 @@ This is what makes the app *feel* like a chat app rather than a demo.
 ## Recommended order
 
 1. ~~**A1 + A2 + A3 as a single piece of work.**~~ Done.
-2. **E1 (foreground service).** Makes messages arrive when the user is not staring at the app.
-   This is now the largest remaining gap.
+2. ~~**E1 (foreground service).**~~ Done.
 3. **B + C.** The visible chat-app shape, built on a foundation that will not need redoing.
+   This is now the next piece of work.
 
 ## Decisions
 
@@ -183,3 +186,23 @@ Consequences to keep in mind for later phases:
   advertising.
 - **E3 is therefore struck from Phase E**, and E2 (auto-reconnect) means "the client
   reconnects to a known server", not a mutual rendezvous.
+
+### E1 — the server keeps advertising while backgrounded (decided 2026-11-17)
+
+Android requires a persistent notification for any process that holds the radio in the
+background, so the question was whether to accept one. We did.
+
+- A chat app that only receives while you are looking at it is not a chat app, so the server
+  keeps advertising and connections stay open after the app leaves the screen.
+- The cost is an ongoing "Bluechat is active" notification on the low-importance
+  `bluechat_session` channel. It is silent, badge-free, carries a **Stop** action and a tap
+  target into the app, and it names what is actually happening ("Discoverable, 1 connected").
+- Stopping is now explicit -- the Stop Server button or the notification action -- rather than
+  a side effect of navigating back.
+- The service does **not** restart itself after a process kill (`START_NOT_STICKY`). The GATT
+  server and any connection are gone by then, so restarting would only put up a notification
+  for a session that no longer exists.
+
+Note for E2: this is what auto-reconnect will hang off. Starting the service from a background
+trigger rather than a tap will run into the API 31+ background-start restriction, which the
+current launcher sidesteps because every session today begins with a user action.
