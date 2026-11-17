@@ -8,8 +8,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.bluechat.domain.repository.ThemePreference
+import com.bluechat.domain.model.Conversation
 import com.bluechat.presentation.chat.ChatScreen
 import com.bluechat.presentation.chat.ChatViewModel
+import com.bluechat.presentation.conversations.ConversationsScreen
+import com.bluechat.presentation.conversations.ConversationsViewModel
 import com.bluechat.presentation.device.DeviceScreen
 import com.bluechat.presentation.device.DeviceViewModel
 import com.bluechat.presentation.server.BroadcastChatViewModel
@@ -37,7 +40,46 @@ fun App() {
     BluechatTheme(darkTheme = darkTheme) {
         val navController = rememberNavController()
 
-        NavHost(navController = navController, startDestination = "devices") {
+        // C2: the app opens on conversations, not on a Bluetooth scanner. Finding a device is
+        // now a deliberate step ("New chat") rather than the first thing the app demands.
+        NavHost(navController = navController, startDestination = "conversations") {
+            composable("conversations") {
+                val viewModel = koinViewModel<ConversationsViewModel>()
+                val state by viewModel.state.collectAsStateWithLifecycle()
+
+                ConversationsScreen(
+                    state = state,
+                    onConversationClicked = { conversation ->
+                        // A conversation is history, so it opens whether or not the peer is in
+                        // range. The chat screen is what reports the live connection state, and
+                        // the outbox is what holds anything sent while disconnected.
+                        when {
+                            conversation.isGroup ->
+                                navController.navigate("server/broadcast")
+
+                            // A peer that dialled *us* is reachable only through the
+                            // peripheral role, so it has to open the server's chat screen --
+                            // keyed on the transport address, which is what that screen
+                            // sends on. Opening the client screen here would render the
+                            // history correctly and then fail every reply, because the
+                            // central-role connection does not exist.
+                            state.isServerSide(conversation) ->
+                                navController.navigate("server/chat/${conversation.peerTransportId}")
+
+                            else ->
+                                navController.navigate("chat/${conversation.conversationId}")
+                        }
+                    },
+                    onNewChat = { navController.navigate("devices") },
+                    onTogglePinned = viewModel::togglePinned,
+                    onToggleMuted = viewModel::toggleMuted,
+                    onSetArchived = viewModel::setArchived,
+                    onToggleShowArchived = viewModel::toggleShowArchived,
+                    onServerMode = { navController.navigate("server") },
+                    onSettingsClicked = { navController.navigate("settings") },
+                )
+            }
+
             composable("devices") {
                 val viewModel = koinViewModel<DeviceViewModel>()
                 val state by viewModel.state.collectAsStateWithLifecycle()
@@ -57,6 +99,7 @@ fun App() {
                     onSettingsClicked = {
                         navController.navigate("settings")
                     },
+                    onBack = { navController.popBackStack() },
                 )
             }
 

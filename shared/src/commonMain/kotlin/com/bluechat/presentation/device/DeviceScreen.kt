@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -37,6 +38,8 @@ fun DeviceScreen(
     onToggleFavourite: (contactId: String) -> Unit = {},
     onStartServer: () -> Unit = {},
     onSettingsClicked: () -> Unit = {},
+    /** Set when this screen is reached as the "new chat" picker rather than as a home screen. */
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // A Scaffold (rather than a bare Column) is what keeps this screen below the status bar
@@ -45,7 +48,12 @@ fun DeviceScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Nearby Devices") },
+                title = { Text(if (onBack != null) "New chat" else "Nearby Devices") },
+                navigationIcon = {
+                    if (onBack != null) {
+                        TextButton(onClick = onBack) { Text("Back") }
+                    }
+                },
                 actions = {
                     IconButton(onClick = onSettingsClicked) {
                         Text("⚙", style = MaterialTheme.typography.headlineSmall)

@@ -129,9 +129,9 @@ identity broadcast — see defect #7 in the test findings.
 
 | # | Task | Notes |
 |---|------|-------|
-| C1 | `Conversation` entity | `lastMessageAt`, preview, `unreadCount`, pinned / muted / archived. |
-| C2 | **Chat list becomes the home screen** | `startDestination` is currently `"devices"` — a scanner. A chat app opens on conversations; scanning becomes a "new chat" action. |
-| C3 | Unread tracking | Mark read on visibility, badge counts. |
+| C1 | `Conversation` entity | **DONE (2026-11-18).** Schema v8. Holds *only* pinned/muted/archived; `lastMessageAt`, preview and `unreadCount` are derived, not stored. |
+| C2 | **Chat list becomes the home screen** | **DONE (2026-11-18).** `startDestination` is `"conversations"`; the scanner is now a "New chat" picker. |
+| C3 | Unread tracking | **PARTLY DONE (2026-11-18).** Badge counts and per-row unread ship with C1; both chat screens now mark read on open. Still missing: server-side read *receipts*, so the peer is not told. |
 | C4 | Pagination | `ChatMessageDao` returns the entire history as one `Flow<List<…>>` into a `LazyColumn`. Fine at 3 messages, not at 3,000. Room `PagingSource` + Paging 3. |
 | C5 | Delete conversation / clear history | `deleteMessagesForDevice` already exists and is unused. |
 
@@ -227,7 +227,7 @@ Tracked in claude-mem work state as `deferred-debts`, so it resurfaces at sessio
 |------|------------------|-----------------------|
 | **Database durability: migrations, schemas, snapshots** | Not a concern while the only installs are the two test phones. | **F0 — release preparation.** See below; deliberately not touched before then. |
 | **C4 pagination** | A whole-history `Flow<List<…>>` into a `LazyColumn` is fine at 30 messages. | Histories in the hundreds, or a visible scroll stutter. |
-| **Defects #12, #14** | Both live in the scanner/device-list path that C2 replaces. | Verify after C2 — do not assume the replacement removed them. |
+| **Defect #12** | Scan list never cleared between scans; lives in the picker. | Still open after C2. |
 | **`DeliveryStatus.Delivered`** | Never set; the status jumps `Sent` → `Read`. | Needs a transport-level ack distinct from the read receipt. |
 | **Server-side read receipts** | Acknowledgement is client-to-server only. | E3 was decided *against*, so the asymmetry is permanent and this is a real gap. |
 | **Typing indicator on server screens** | Wired client-side only. | Cheap; fold into B/C when touching those screens. |
@@ -353,3 +353,39 @@ confuse:
 Snapshots must be produced by a reproducible fixture builder rather than pulled off a handset.
 A database copied from a device reads **empty** unless its `-wal` file is checkpointed in
 first; that already cost us an investigation during the E1 device testing.
+
+### C1 — the conversation list is derived, not stored (decided 2026-11-18)
+
+`conversations` holds **only** the three flags a user sets: pinned, muted, archived. The things
+a chat list usually caches -- `lastMessageAt`, the message preview, the unread count -- are
+computed by `ConversationDao.observeSummaries` on every read instead.
+
+The reason is that storing them means writing two tables on every message and then owning the
+bug where they disagree. A derived list cannot drift from the history it summarises, and there
+is no "create the conversation" step to forget: a conversation exists because it has messages.
+The flags row is created lazily, the first time a flag is set, which is why the query LEFT
+JOINs it — an absent row means "all three false", not missing data.
+
+If that query ever becomes the bottleneck, caching it is a measurable optimisation to make
+then. At the current scale it is not one, and the roadmap's own C4 note about history size is
+the signal to revisit.
+
+### C2 — a conversation has to know which BLE role owns it (found on device, 2026-11-18)
+
+Making the chat list the home screen exposed something the old navigation hid. The list routes
+by conversation id, but the two BLE roles are deliberately asymmetric (see the E3 decision), and
+a conversation with a peer that dialled *us* can only be replied to through the peripheral role.
+
+Routing everything to the client chat screen looked right -- the history rendered perfectly --
+and would have failed every reply, because the central-role connection does not exist on the
+server. It showed up on device as a red "disconnected" dot on a screen that had just displayed
+a live conversation.
+
+So `Conversation` carries `peerTransportId`, and the list checks it against the server's
+connected clients to choose the screen. Verified both directions on two phones: client to
+server, then a reply from the server's own chat list back to the client.
+
+This also forced **defect #14** to be fixed rather than deferred. The `broadcast` mirror ran for
+both roles, which was a harmless duplicate row while a client had no group screen to show it --
+but the chat list would have surfaced it as a phantom "Group Chat" conversation on a device with
+no group. Inbound messages now carry their role, and only the server mirrors.

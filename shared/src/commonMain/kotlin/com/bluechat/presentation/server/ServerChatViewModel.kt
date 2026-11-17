@@ -6,6 +6,7 @@ import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.domain.repository.BlePeripheralServer
 import com.bluechat.domain.repository.ChatRepository
+import com.bluechat.domain.repository.ConversationRepository
 import com.bluechat.domain.repository.PeerDirectory
 import com.bluechat.presentation.chat.ChatUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,6 +29,7 @@ class ServerChatViewModel(
     private val transportId: String,
     private val server: BlePeripheralServer,
     private val chatRepository: ChatRepository,
+    private val conversationRepository: ConversationRepository,
     private val peerDirectory: PeerDirectory,
 ) : ViewModel() {
 
@@ -46,6 +48,21 @@ class ServerChatViewModel(
             isConnected = true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
+
+    init {
+        // Clears the unread badge for this conversation while it is open.
+        //
+        // Local only: the server still sends no read receipts, so the peer is not told. That
+        // gap predates C3 and is tracked separately -- but without this the badge introduced
+        // by C1 would stick on the server forever, since nothing else ever set `readAt` on an
+        // inbound message here.
+        //
+        // Must stay *below* `conversationKey`: an init block that reads a property declared
+        // later compiles fine but dereferences null if the coroutine ever starts eagerly.
+        viewModelScope.launch {
+            conversationRepository.markRead(conversationKey.first())
+        }
+    }
 
     // Incoming messages are persisted by IncomingMessageCoordinator for the whole process,
     // so this screen only has to read them back out of the database.

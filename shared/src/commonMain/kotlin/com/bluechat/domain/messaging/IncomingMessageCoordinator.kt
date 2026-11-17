@@ -14,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlin.time.Clock
@@ -47,13 +48,21 @@ class IncomingMessageCoordinator(
 
         // Both roles produce the same domain type, so they can share one handler. A device can
         // be acting as server and client at the same time.
-        merge(server.incomingMessages, bleController.incomingMessages)
-            .onEach(::handle)
+        //
+        // The role is carried alongside the message because one decision depends on it: only
+        // the server keeps a group thread. See [handle].
+        merge(
+            server.incomingMessages.map { it to Role.SERVER },
+            bleController.incomingMessages.map { it to Role.CLIENT },
+        )
+            .onEach { (message, role) -> handle(message, role) }
             .catch { /* keep the process-wide collector alive */ }
             .launchIn(scope)
     }
 
-    private suspend fun handle(message: PeerMessage) {
+    private enum class Role { SERVER, CLIENT }
+
+    private suspend fun handle(message: PeerMessage, role: Role) {
         when (message) {
             is PeerMessage.Profile -> {
                 // Identity announcement: from here on this peer's messages land in a
@@ -95,9 +104,18 @@ class IncomingMessageCoordinator(
                 if (sender?.isBlocked == true) return
 
                 store(message.peerId, message.body, message.messageId)
+
                 // Mirror into the group thread so Server Mode's Group Chat shows the
                 // conversation, not just our own outgoing broadcasts.
-                store(BROADCAST_DEVICE_ID, message.body, message.messageId)
+                //
+                // Server role only (defect #14). The mirror used to run for both roles, which
+                // stored every inbound message twice on a client -- harmless while the client
+                // had no Group Chat screen to show it, but it was always a duplicate row, and
+                // once the chat list became the home screen it surfaced as a phantom "Group
+                // Chat" conversation on a device that has no group.
+                if (role == Role.SERVER) {
+                    store(BROADCAST_DEVICE_ID, message.body, message.messageId)
+                }
                 messageNotifier.showMessageNotification(
                     sender?.displayName ?: "Unknown",
                     message.body,
