@@ -244,3 +244,43 @@ ageing entries out by `lastSeenAt` once B5 (presence) lands.
   `dumpsys` still reported `isForeground=true`, and it reappeared on the next session change.
   The service is not harmed by this, but the user can lose their only visible handle on it, so
   E5 (connection-state UX) should surface session state in-app as well.
+
+---
+
+## Merge verification (2026-11-17)
+
+Both phones had their app data cleared first: the pre-merge Phase A build left a database
+stamped version 3 containing `peers` rather than `favorite_devices`, which no migration can
+repair.
+
+| Check | Result |
+|-------|--------|
+| Database created fresh | version 6, tables `chat_messages`, `favorite_devices`, `pending_messages`, `peers` |
+| MTU still negotiated | `resulted MTU 517` on connect |
+| Long message still framed | 316 characters sent client->server across 5 writes, stored intact |
+| Stable identity | message keyed on peer id `aae7d13c-...`, `peers` row populated |
+| Foreground service (E1) | `isForeground=true types=0x00000010` while backgrounded |
+| Phase 9 favourites | star control and Favourites section render on the device list |
+| Phase 9 signal strength | RSSI bars render in the chat top bar, fed by the merged controller |
+| Phase 9 date separators | "Today" separator renders |
+| **Read receipt round trip** | server's message reached `deliveryStatus=Read` with `readAt` set once the client displayed it |
+
+### 13. Server-side sends did not record the id they put on the wire — FIXED during the merge
+
+**Where:** `ServerChatViewModel.sendMessage`, `BroadcastChatViewModel.sendMessage`
+
+Both generated a `messageId` for the wire but inserted the row without setting `messageUuid`,
+so an inbound read receipt had no row to match and `updateMessageStatusByUuid` silently
+updated nothing. Phase 9 never hit this because it only ever implemented the client side.
+
+**Fixed by:** persisting `messageUuid = messageId` on both paths.
+
+**Re-verified:** the round trip in the table above only passes with this fix.
+
+### 14. Inbound messages are still mirrored into `broadcast` on the client — OPEN, by design for now
+
+A message received by the *client* is stored twice: once under the peer's conversation and once
+under `broadcast`. That mirroring exists so Server Mode's Group Chat shows the whole
+conversation, but the client has no Group Chat screen, so on that side it is pure duplication.
+Confirmed during merge testing; unchanged behaviour, not a merge regression. It is one of the
+open decisions listed against Phase C.

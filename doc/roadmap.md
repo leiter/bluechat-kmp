@@ -96,6 +96,11 @@ A3 gates most of Phase D.
 | B4 | Profile exchange | Send own display name on connect; store as the peer's *claimed* name, with the local nickname taking precedence. |
 | B5 | Presence | In-range / out-of-range derived from scan results plus connection state. |
 
+Phase 9 (merged) delivered a `favorite_devices` table with a star control and a Favourites
+section on the device list. That is not B1: it keys on the **transport address**, not the
+stable peer id from A1, so a favourite does not survive address randomisation. B1 should
+absorb it rather than sit alongside it.
+
 B4 also removes the current need to hijack the **system-wide Bluetooth adapter name** as the
 identity broadcast — see defect #7 in the test findings.
 
@@ -115,11 +120,18 @@ identity broadcast — see defect #7 in the test findings.
 
 ## Phase D — Message features
 
-- **D1. Delivery and read receipts.** `DeliveryStatus` already has `Sending`/`Sent`/`Failed`;
-  add `Delivered` and `Read`, driven by receipt frames. Requires A3.
-- **D2. Outbox and retry.** Queue failed sends, flush on reconnect, tap-to-retry.
-- **D3. Day separators, message grouping, proper time formatting.**
-- **D4. Typing indicator.** Requires A3.
+- **D1. Delivery and read receipts.** **MOSTLY DONE** (Phase 9, merged). `DeliveryStatus` now
+  carries `Queued`/`Delivered`/`Read`, and receipts ride the framed protocol as
+  `Envelope.ReadReceipt`. Verified round trip: a message the server sent shows `Read` with
+  `readAt` set once the client has it on screen. Still missing: `Delivered` is never set (only
+  `Sent` then `Read`), and the server side does not send receipts for what it receives, so
+  acknowledgement is client-to-server only.
+- **D2. Outbox and retry.** **DONE** (Phase 9, merged). `pending_messages` plus
+  `MessageQueueRepository`; the queue drains on reconnect. No tap-to-retry yet.
+- **D3. Day separators, message grouping, proper time formatting.** **DONE** (Phase 9, merged)
+  for separators and relative times; grouping is still outstanding.
+- **D4. Typing indicator.** **DONE** (Phase 9, merged) as `Envelope.Typing`. Client-to-server
+  only, and deliberately never persisted. Not wired into the server's chat screens.
 - **D5. Long-press actions** — copy, delete, reply-quote.
 - **D6. Image attachments** with chunked transfer and progress. Scope this carefully: BLE
   throughput is roughly 1–10 KB/s, so a photo takes tens of seconds. The `BluetoothLEChat`
@@ -138,7 +150,11 @@ This is what makes the app *feel* like a chat app rather than a demo.
   new `BleSessionMonitor` in `commonMain`. The service owns no BLE state: it watches one
   folded `StateFlow`, mirrors it into an ongoing notification, and stops itself the moment the
   session goes idle. Leaving the Server Mode screen no longer stops the server.
-- **E2. Auto-reconnect to known contacts.** Background scan, connect on sight, drain the outbox.
+- **E2. Auto-reconnect to known contacts.** **MOSTLY DONE** (Phase 9, merged). Five attempts on
+  an exponential backoff, re-scanning when the advertisement has gone stale, draining the
+  outbox on success. The merge added MTU renegotiation and a re-announced identity on
+  reconnect, without which every later message silently fell back to 20-byte frames. Still
+  client-initiated only: there is no background scan when the app is not already connected.
 - **E3. Simultaneous central + peripheral.** Currently a mode switch — one phone must be
   explicitly told to be "Server Mode". A standard chat app is both roles at once, so any two
   installs simply talk. This is a genuine architectural change and should be decided early,
@@ -146,7 +162,10 @@ This is what makes the app *feel* like a chat app rather than a demo.
 - **E4. Notification fixes.** `notificationId++` means every message spawns a separate
   notification, and there is no `contentIntent`, so tapping one does nothing. Use one
   notification per conversation, `MessagingStyle`, a deep link into that chat, and direct reply.
-- **E5. Connection-state UX** — reconnecting banner, offline indicator.
+- **E5. Connection-state UX** — **PARTLY DONE** (Phase 9, merged): a reconnecting banner and a
+  signal-strength indicator driven by RSSI polling. Still missing an in-app view of session
+  state, which matters because Android 14+ lets the user swipe the foreground-service
+  notification away (see the test findings).
 
 ---
 
@@ -206,3 +225,22 @@ background, so the question was whether to accept one. We did.
 Note for E2: this is what auto-reconnect will hang off. Starting the service from a background
 trigger rather than a tap will run into the API 31+ background-start restriction, which the
 current launcher sidesteps because every session today begins with a user action.
+
+### Merge with Phase 9 (2026-11-17)
+
+`origin/dev` had grown a Phase 9 from the same `b59f670` base: offline queue, read receipts,
+typing indicators, auto-reconnect, favourites, signal quality and 23 tests. Merged here.
+
+**Wire protocol: one had to go.** Phase 9's `BleMessageProtocol` (a one-byte type tag plus
+`"uuid|text"`) was removed in favour of `data/protocol/`. It has no framing and no MTU
+negotiation, so keeping it would have reinstated the ~20-byte ceiling that Phase A existed to
+remove. Its two features were ported onto the framed protocol as `Envelope.ReadReceipt` and
+`Envelope.Typing`, so nothing Phase 9 could do was lost.
+
+**Schema.** Both branches had written a different `MIGRATION_2_3`. The published chain won and
+the peer directory moved to 5->6; the database is now version 6 with all four tables.
+
+**Three regressions were kept out.** Phase 9 predates the blocker fixes, so its
+`write()` calls still use kable's `WithoutResponse` default, its `ChatViewModel` still
+collects inbound messages per-screen, and its `DeviceViewModel.onCleared()` still calls
+`release()` on an application-scoped singleton. The merged code keeps the fixed forms.

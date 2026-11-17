@@ -46,6 +46,9 @@ class BroadcastChatViewModel(
                 isFromLocalUser = true,
                 timestamp = Clock.System.now().toEpochMilliseconds(),
                 deliveryStatus = DeliveryStatus.Sending,
+                // Must match the id put on the wire, or the peer's read receipt has no row
+                // to update and is silently dropped.
+                messageUuid = messageId,
             )
             val id = chatRepository.insertMessage(message)
             try {
