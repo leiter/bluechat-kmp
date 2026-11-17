@@ -1,7 +1,12 @@
 package com.bluechat.data.ble
 
+import com.bluechat.data.protocol.Envelope
+import com.bluechat.data.protocol.ProtocolCodec
+import com.bluechat.data.protocol.toPeerMessage
 import com.bluechat.domain.model.BleDevice
 import com.bluechat.domain.model.ConnectionState
+import com.bluechat.domain.model.PeerMessage
+import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.BleController
 import com.juul.kable.Advertisement
 import com.juul.kable.Peripheral
@@ -26,9 +31,23 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.update
+import kotlin.time.Clock
 
-class KableCentralController : BleController {
+class KableCentralController(
+    private val appPreferences: AppPreferences,
+) : BleController {
+
+    private val codec = ProtocolCodec(nextMessageId = { nextMessageId++ })
+    private var nextMessageId: Int = 0
+
+    /**
+     * Bytes we may put in one write, header included. Resolved from the negotiated MTU once
+     * connected; until then assume the pessimistic ATT default of 23 (20 usable).
+     */
+    private var maxFrameSize: Int = DEFAULT_MAX_FRAME_SIZE
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -69,14 +88,19 @@ class KableCentralController : BleController {
      * previous `get()`-based version captured a null peripheral once and stayed empty forever.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    override val incomingMessages: Flow<Pair<String, ByteArray>> =
+    override val incomingMessages: Flow<PeerMessage> =
         _connection.flatMapLatest { entry ->
             if (entry == null) {
                 emptyFlow()
             } else {
                 val (deviceId, peripheral) = entry
                 peripheral.observe(messageCharacteristic)
-                    .map { data -> deviceId to data }
+                    .mapNotNull { frame ->
+                        // Frames are reassembled before being decoded; a partial message
+                        // yields null and is simply not emitted.
+                        codec.decode(deviceId, frame, Clock.System.now().toEpochMilliseconds())
+                            ?.toPeerMessage(deviceId)
+                    }
                     .catch { e -> _lastError.value = "Lost message stream: ${e.message}" }
             }
         }
@@ -154,6 +178,7 @@ class KableCentralController : BleController {
         for (attempt in 0 until maxAttempts) {
             try {
                 p.connect()
+                onConnected(p)
                 return
             } catch (e: Exception) {
                 lastException = e
@@ -188,18 +213,62 @@ class KableCentralController : BleController {
     }
 
     override suspend fun disconnect() {
+        val deviceId = _connection.value?.first
         _connection.value?.second?.disconnect()
         _connection.value = null
         _connectedDeviceId.value = null
+        deviceId?.let(codec::forget)
+        maxFrameSize = DEFAULT_MAX_FRAME_SIZE
     }
 
-    override suspend fun send(message: String) {
+    /**
+     * Settles the per-write budget and tells the peer who we are. Until the profile arrives the
+     * other side only knows our Bluetooth address, which is not an identity.
+     */
+    private suspend fun onConnected(peripheral: Peripheral) {
+        peripheral.requestLargeMtu()
+        maxFrameSize = runCatching {
+            peripheral.maximumWriteValueLengthForType(WriteType.WithResponse)
+        }.getOrNull()?.takeIf { it > 0 } ?: DEFAULT_MAX_FRAME_SIZE
+
+        runCatching {
+            writeEnvelope(
+                peripheral,
+                Envelope.Profile(
+                    senderId = appPreferences.localPeerId,
+                    displayName = appPreferences.displayName.first(),
+                ),
+            )
+        }
+    }
+
+    override suspend fun send(messageId: String, body: String) {
         val p = _connection.value?.second ?: error("Not connected")
-        p.write(messageCharacteristic, message.encodeToByteArray(), WriteType.WithResponse)
+        writeEnvelope(
+            p,
+            Envelope.Text(
+                senderId = appPreferences.localPeerId,
+                messageId = messageId,
+                sentAt = Clock.System.now().toEpochMilliseconds(),
+                body = body,
+            ),
+        )
+    }
+
+    /** Writes an envelope as one or more frames, each within the negotiated MTU. */
+    private suspend fun writeEnvelope(peripheral: Peripheral, envelope: Envelope) {
+        codec.encode(envelope, maxFrameSize).forEach { frame ->
+            peripheral.write(messageCharacteristic, frame, WriteType.WithResponse)
+        }
     }
 
     override fun release() {
         stopScan()
         scope.cancel()
+    }
+
+    private companion object {
+        /** ATT default MTU of 23 minus the 3-byte ATT header. */
+        const val DEFAULT_MAX_FRAME_SIZE = 20
     }
 }

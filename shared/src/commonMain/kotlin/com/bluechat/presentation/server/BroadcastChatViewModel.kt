@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 class BroadcastChatViewModel(
     private val server: BlePeripheralServer,
@@ -38,6 +39,7 @@ class BroadcastChatViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
+            val messageId = Uuid.random().toString()
             val message = ChatMessage(
                 deviceId = BROADCAST_DEVICE_ID,
                 message = text,
@@ -47,7 +49,7 @@ class BroadcastChatViewModel(
             )
             val id = chatRepository.insertMessage(message)
             try {
-                server.sendToAll(text)
+                server.sendToAll(messageId, text)
                 chatRepository.updateMessageStatus(id, DeliveryStatus.Sent)
             } catch (_: Exception) {
                 chatRepository.updateMessageStatus(id, DeliveryStatus.Failed)

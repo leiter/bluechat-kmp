@@ -21,7 +21,11 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.content.Context
 import android.os.ParcelUuid
 import android.util.Log
+import com.bluechat.data.protocol.Envelope
+import com.bluechat.data.protocol.ProtocolCodec
+import com.bluechat.data.protocol.toPeerMessage
 import com.bluechat.domain.model.ConnectedClient
+import com.bluechat.domain.model.PeerMessage
 import com.bluechat.domain.model.ServerState
 import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.BlePeripheralServer
@@ -40,18 +44,24 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 import java.util.UUID
 
 @SuppressLint("MissingPermission")
 class AndroidBlePeripheralServer(
     private val context: Context,
-    appPreferences: AppPreferences,
+    appPreferencesParam: AppPreferences,
 ) : BlePeripheralServer {
 
     companion object {
         private const val TAG = "BlePeripheralServer"
         private const val DEFAULT_DISPLAY_NAME = "Bluechat"
         private const val MAX_ADVERTISED_NAME_LENGTH = 26
+        private const val DEFAULT_ATT_MTU = 23
+        private const val ATT_HEADER_SIZE = 3
+        private const val FRAME_PACING_MILLIS = 8L
+        private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
+            UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -65,7 +75,7 @@ class AndroidBlePeripheralServer(
     private var originalAdapterName: String? = null
 
     init {
-        appPreferences.displayName
+        appPreferencesParam.displayName
             .onEach { currentDisplayName = it }
             .launchIn(scope)
     }
@@ -77,6 +87,8 @@ class AndroidBlePeripheralServer(
 
     private val connectedDevices = mutableListOf<BluetoothDevice>()
 
+    private val appPreferences: AppPreferences = appPreferencesParam
+
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
@@ -86,8 +98,20 @@ class AndroidBlePeripheralServer(
     private val _connectedClients = MutableStateFlow<List<ConnectedClient>>(emptyList())
     override val connectedClients: StateFlow<List<ConnectedClient>> = _connectedClients.asStateFlow()
 
-    private val _incomingMessages = MutableSharedFlow<Pair<String, ByteArray>>(extraBufferCapacity = 64)
-    override val incomingMessages: Flow<Pair<String, ByteArray>> = _incomingMessages.asSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<PeerMessage>(extraBufferCapacity = 64)
+    override val incomingMessages: Flow<PeerMessage> = _incomingMessages.asSharedFlow()
+
+    private val codec = ProtocolCodec(nextMessageId = { nextMessageId++ })
+    private var nextMessageId: Int = 0
+
+    /**
+     * Negotiated ATT MTU per connected client. Android reports it through [onMtuChanged] only
+     * when the central asks for a change, so absence means the 23-byte default.
+     */
+    private val clientMtu = mutableMapOf<String, Int>()
+
+    private fun maxFrameSizeFor(address: String): Int =
+        (clientMtu[address] ?: DEFAULT_ATT_MTU) - ATT_HEADER_SIZE
 
     private fun kotlinUuidToJava(uuid: kotlin.uuid.Uuid): UUID =
         UUID.fromString(uuid.toString())
@@ -106,13 +130,23 @@ class AndroidBlePeripheralServer(
                     updateConnectedClients()
                 } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
                     connectedDevices.remove(device)
+                    clientMtu.remove(device.address)
+                    codec.forget(device.address)
                     updateConnectedClients()
                 }
             } else {
                 Log.e(TAG, "Connection state change error: $status")
                 connectedDevices.remove(device)
+                clientMtu.remove(device.address)
+                codec.forget(device.address)
                 updateConnectedClients()
             }
+        }
+
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            super.onMtuChanged(device, mtu)
+            Log.i(TAG, "onMtuChanged device=${device.address} mtu=$mtu")
+            clientMtu[device.address] = mtu
         }
 
         override fun onCharacteristicReadRequest(
@@ -140,7 +174,15 @@ class AndroidBlePeripheralServer(
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             Log.i(TAG, "onCharacteristicWriteRequest ${characteristic.uuid}")
             if (characteristic.uuid == messageCharUuid) {
-                _incomingMessages.tryEmit(device.address to value)
+                // One write is one frame; a message may span several.
+                val envelope = codec.decode(
+                    device.address,
+                    value,
+                    Clock.System.now().toEpochMilliseconds(),
+                )
+                if (envelope != null) {
+                    _incomingMessages.tryEmit(envelope.toPeerMessage(device.address))
+                }
             }
             if (responseNeeded) {
                 gattServer?.sendResponse(
@@ -162,6 +204,18 @@ class AndroidBlePeripheralServer(
                 gattServer?.sendResponse(
                     device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value
                 )
+            }
+
+            // Announce ourselves only once the client has enabled notifications. Doing it when
+            // the ACL link came up was too early -- there was nothing subscribed yet, so the
+            // notification was dropped and the peer never learned our identity.
+            val isCccd = descriptor.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
+            val enablesNotifications =
+                value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ||
+                    value.contentEquals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
+
+            if (isCccd && enablesNotifications) {
+                scope.launch { announceProfileTo(device) }
             }
         }
     }
@@ -229,7 +283,7 @@ class AndroidBlePeripheralServer(
         // by GATT clients (incl. kable) to enable notifications.
         messageCharacteristic.addDescriptor(
             BluetoothGattDescriptor(
-                UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"),
+                CLIENT_CHARACTERISTIC_CONFIG_UUID,
                 BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE,
             )
         )
@@ -324,26 +378,52 @@ class AndroidBlePeripheralServer(
         }
     }
 
-    override suspend fun sendToAll(message: String) {
-        val server = gattServer ?: return
-        val service = server.getService(serviceUuid) ?: return
-        val characteristic = service.getCharacteristic(messageCharUuid) ?: return
-
-        val bytes = message.encodeToByteArray()
+    override suspend fun sendToAll(messageId: String, body: String) {
         for (device in connectedDevices.toList()) {
-            characteristic.setValue(bytes)
-            server.notifyCharacteristicChanged(device, characteristic, false)
+            sendEnvelope(device, textEnvelope(messageId, body))
         }
     }
 
-    override suspend fun sendTo(clientId: String, message: String) {
+    override suspend fun sendTo(transportId: String, messageId: String, body: String) {
+        val device = connectedDevices.find { it.address == transportId } ?: return
+        sendEnvelope(device, textEnvelope(messageId, body))
+    }
+
+    private fun textEnvelope(messageId: String, body: String) = Envelope.Text(
+        senderId = appPreferences.localPeerId,
+        messageId = messageId,
+        sentAt = Clock.System.now().toEpochMilliseconds(),
+        body = body,
+    )
+
+    private suspend fun announceProfileTo(device: BluetoothDevice) {
+        sendEnvelope(
+            device,
+            Envelope.Profile(
+                senderId = appPreferences.localPeerId,
+                displayName = currentDisplayName,
+            ),
+        )
+    }
+
+    /**
+     * Notifies [device] with an envelope, split into frames that fit that client's negotiated
+     * MTU. Each notification must be sent on its own; a payload longer than the MTU allows is
+     * silently truncated by the stack, which is what used to cap messages at 20 bytes.
+     */
+    private suspend fun sendEnvelope(device: BluetoothDevice, envelope: Envelope) {
         val server = gattServer ?: return
         val service = server.getService(serviceUuid) ?: return
         val characteristic = service.getCharacteristic(messageCharUuid) ?: return
 
-        val device = connectedDevices.find { it.address == clientId } ?: return
-        characteristic.setValue(message.encodeToByteArray())
-        server.notifyCharacteristicChanged(device, characteristic, false)
+        val frames = codec.encode(envelope, maxFrameSizeFor(device.address))
+        for (frame in frames) {
+            characteristic.setValue(frame)
+            server.notifyCharacteristicChanged(device, characteristic, false)
+            // Back-to-back notifications can outrun the stack's buffers; a short pause is
+            // enough to keep a multi-frame message from being dropped mid-way.
+            if (frames.size > 1) delay(FRAME_PACING_MILLIS)
+        }
     }
 
     override fun release() {

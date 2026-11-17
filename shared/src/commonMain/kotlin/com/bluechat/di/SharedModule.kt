@@ -4,9 +4,11 @@ import com.bluechat.data.ble.KableCentralController
 import com.bluechat.data.db.ChatDatabase
 import com.bluechat.data.db.createDatabase
 import com.bluechat.data.repository.ChatRepositoryImpl
+import com.bluechat.data.repository.PeerDirectoryImpl
 import com.bluechat.domain.messaging.IncomingMessageCoordinator
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
+import com.bluechat.domain.repository.PeerDirectory
 import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.device.DeviceViewModel
 import com.bluechat.presentation.server.BroadcastChatViewModel
@@ -22,14 +24,16 @@ import org.koin.dsl.module
 val sharedModule = module {
     single { createDatabase(get()) }
     single { get<ChatDatabase>().chatMessageDao() }
+    single { get<ChatDatabase>().peerDao() }
     singleOf(::ChatRepositoryImpl) bind ChatRepository::class
+    singleOf(::PeerDirectoryImpl) bind PeerDirectory::class
     singleOf(::KableCentralController) bind BleController::class
     singleOf(::IncomingMessageCoordinator)
 
     viewModelOf(::DeviceViewModel)
-    viewModel { params -> ChatViewModel(params.get(), get(), get()) }
+    viewModel { params -> ChatViewModel(params.get(), get(), get(), get()) }
     viewModelOf(::ServerViewModel)
-    viewModel { params -> ServerChatViewModel(params.get(), get(), get()) }
+    viewModel { params -> ServerChatViewModel(params.get(), get(), get(), get()) }
     viewModelOf(::BroadcastChatViewModel)
     viewModelOf(::SettingsViewModel)
 }

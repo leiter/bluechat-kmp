@@ -1,20 +1,24 @@
 package com.bluechat.domain.messaging
 
 import com.bluechat.domain.model.ChatMessage
+import com.bluechat.domain.model.PeerMessage
 import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.BlePeripheralServer
 import com.bluechat.domain.repository.ChatRepository
+import com.bluechat.domain.repository.PeerDirectory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlin.time.Clock
 
 /**
- * Owns the one and only subscription to inbound BLE traffic.
+ * Owns the one and only subscription to inbound traffic, in both BLE roles.
  *
  * Previously each chat ViewModel subscribed in its own `init`, so a message was only stored
  * (and only raised a notification) while that exact conversation was on screen. Because the
@@ -29,6 +33,7 @@ class IncomingMessageCoordinator(
     private val server: BlePeripheralServer,
     private val bleController: BleController,
     private val chatRepository: ChatRepository,
+    private val peerDirectory: PeerDirectory,
     private val messageNotifier: MessageNotifier,
 ) {
 
@@ -39,34 +44,46 @@ class IncomingMessageCoordinator(
         if (started) return
         started = true
 
-        // Peripheral/server role: messages written by connected clients.
-        server.incomingMessages
-            .onEach { (clientId, data) ->
-                val text = data.decodeToString()
-                store(clientId, text)
-                // Mirror into the group thread so Server Mode's Group Chat shows the
-                // conversation, not just our own outgoing broadcasts.
-                store(BROADCAST_DEVICE_ID, text)
-                messageNotifier.showMessageNotification("Client", text)
-            }
-            .catch { /* keep the process-wide collector alive */ }
-            .launchIn(scope)
-
-        // Central/client role: notifications from the peripheral we are connected to.
-        bleController.incomingMessages
-            .onEach { (deviceId, data) ->
-                val text = data.decodeToString()
-                store(deviceId, text)
-                messageNotifier.showMessageNotification("Remote", text)
-            }
+        // Both roles produce the same domain type, so they can share one handler. A device can
+        // be acting as server and client at the same time.
+        merge(server.incomingMessages, bleController.incomingMessages)
+            .onEach(::handle)
             .catch { /* keep the process-wide collector alive */ }
             .launchIn(scope)
     }
 
-    private suspend fun store(deviceId: String, text: String) {
+    private suspend fun handle(message: PeerMessage) {
+        when (message) {
+            is PeerMessage.Profile -> {
+                // Identity announcement: from here on this peer's messages land in a
+                // conversation keyed on who they are, not on the address they arrived from.
+                peerDirectory.remember(
+                    peerId = message.peerId,
+                    transportId = message.transportId,
+                    displayName = message.displayName,
+                )
+            }
+
+            is PeerMessage.Text -> {
+                // No name to offer here, so an already-announced one is preserved.
+                peerDirectory.remember(
+                    peerId = message.peerId,
+                    transportId = message.transportId,
+                )
+                store(message.peerId, message.body)
+                // Mirror into the group thread so Server Mode's Group Chat shows the
+                // conversation, not just our own outgoing broadcasts.
+                store(BROADCAST_DEVICE_ID, message.body)
+                val sender = peerDirectory.nameOf(message.peerId) ?: "Unknown"
+                messageNotifier.showMessageNotification(sender, message.body)
+            }
+        }
+    }
+
+    private suspend fun store(conversationId: String, text: String) {
         chatRepository.insertMessage(
             ChatMessage(
-                deviceId = deviceId,
+                deviceId = conversationId,
                 message = text,
                 isFromLocalUser = false,
                 timestamp = Clock.System.now().toEpochMilliseconds(),

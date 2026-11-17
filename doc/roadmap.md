@@ -10,7 +10,12 @@ as a chat app.
 
 ---
 
-## Known blocker, not yet measured
+## Known blocker — RESOLVED in Phase A
+
+> **Update 2026-11-17:** fixed and measured. The MTU is now negotiated to 517 and payloads are
+> framed, so messages are no longer capped. Verified on device: a 330-character message
+> client→server and a 720-character message server→client (the latter genuinely multi-frame)
+> both arrived intact. The original diagnosis follows.
 
 **There is no MTU negotiation and no chunking anywhere in the codebase.** A grep for
 `mtu|chunk|requestMtu` across `shared/src` returns nothing. The default ATT MTU is 23, which
@@ -27,12 +32,18 @@ between the current state and a usable chat app, and it is addressed by task A2 
 
 ---
 
-## Phase A — Foundations
+## Phase A — Foundations — DONE
 
 Everything else depends on these. They are one protocol change and should be done together:
 retrofitting them later means a second schema and wire-format migration.
 
-### A1. Stable peer identity
+**Delivered.** `data/protocol/` holds the framing (`Frame`, `Reassembler`) and the wire
+envelope (`Envelope`, `ProtocolCodec`), covered by 17 unit tests — the project's first. A
+`peers` table plus `PeerDirectory` keeps the stable-identity mapping, added by migration
+v2→v3. Both BLE roles negotiate the MTU and chunk accordingly, and both announce their
+identity as soon as the peer can actually hear it.
+
+### A1. Stable peer identity — done
 
 Conversations are currently keyed on the transport address — MAC on Android, an opaque UUID on
 iOS. That identity is wrong in three distinct ways:
@@ -46,7 +57,7 @@ Generate a per-install UUID, exchange it on connect over a dedicated characteris
 blueprint profile already reserves `CHARACTERISTIC_VERSION_UUID` and `DESCRIPTOR_*_UUID`), and
 key all persistence on that instead of on the address.
 
-### A2. MTU negotiation and message framing
+### A2. MTU negotiation and message framing — done
 
 Request a larger MTU on connect, then chunk any payload above the negotiated size:
 
@@ -57,7 +68,7 @@ Request a larger MTU on connect, then chunk any payload above the negotiated siz
 Note that `decodeToString()` applied to an arbitrary chunk boundary will corrupt multi-byte
 UTF-8. Reassemble the bytes first, decode once at the end.
 
-### A3. A real wire envelope
+### A3. A real wire envelope — done
 
 The payload currently *is* the message text — there is nowhere to put anything else. Introduce
 an envelope serialized with kotlinx.serialization:
@@ -151,17 +162,24 @@ This is what makes the app *feel* like a chat app rather than a demo.
 
 ## Recommended order
 
-1. **A1 + A2 + A3 as a single piece of work.** Lifts the ~20-character ceiling and establishes
-   an identity to hang contacts off.
+1. ~~**A1 + A2 + A3 as a single piece of work.**~~ Done.
 2. **E1 (foreground service).** Makes messages arrive when the user is not staring at the app.
+   This is now the largest remaining gap.
 3. **B + C.** The visible chat-app shape, built on a foundation that will not need redoing.
 
-Doing B and C before A means building them twice.
+## Decisions
 
-### One decision to make first
+### E3 — symmetric peer: NO (decided 2026-11-17)
 
-**E3 — symmetric peer, yes or no?**
+The app keeps the **asymmetric** model: one device is explicitly put into Server Mode and the
+other scans and connects to it. Phase A did not change this — the protocol layer is
+role-agnostic, but the roles themselves stay distinct.
 
-If yes, do it alongside Phase A, because it changes what a conversation is attached to. If no,
-the app remains one where somebody has to volunteer as the server, which is not how a chat app
-behaves.
+Consequences to keep in mind for later phases:
+
+- Two installs cannot talk until somebody volunteers as the server; that is accepted.
+- Phase B/C must not assume a conversation can be opened from either side at will. The
+  contact list and chat list need to show that a peer is only reachable when one end is
+  advertising.
+- **E3 is therefore struck from Phase E**, and E2 (auto-reconnect) means "the client
+  reconnects to a known server", not a mutual rendezvous.

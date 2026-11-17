@@ -12,7 +12,7 @@ import org.koin.dsl.module
 
 val iosModule = module {
     single { getDatabaseBuilder() }
-    singleOf(::IosBlePeripheralServer) bind BlePeripheralServer::class
     singleOf(::IosAppPreferences) bind AppPreferences::class
+    singleOf(::IosBlePeripheralServer) bind BlePeripheralServer::class
     singleOf(::MessageNotifier)
 }

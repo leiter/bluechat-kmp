@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.ThemePreference
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,6 +13,9 @@ class AndroidAppPreferences(context: Context) : AppPreferences {
 
     private val prefs: SharedPreferences =
         context.getSharedPreferences("bluechat_prefs", Context.MODE_PRIVATE)
+
+    override val localPeerId: String = prefs.getString(KEY_PEER_ID, null)
+        ?: Uuid.random().toString().also { prefs.edit().putString(KEY_PEER_ID, it).apply() }
 
     private val _displayName = MutableStateFlow(prefs.getString("display_name", "Bluechat") ?: "Bluechat")
     override val displayName: Flow<String> = _displayName.asStateFlow()
@@ -29,5 +33,9 @@ class AndroidAppPreferences(context: Context) : AppPreferences {
     override suspend fun setThemePreference(theme: ThemePreference) {
         prefs.edit().putInt("theme", theme.ordinal).apply()
         _themePreference.value = theme
+    }
+
+    private companion object {
+        const val KEY_PEER_ID = "local_peer_id"
     }
 }
