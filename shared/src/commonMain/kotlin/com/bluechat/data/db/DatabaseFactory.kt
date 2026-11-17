@@ -12,7 +12,7 @@ import kotlinx.coroutines.IO
  * which matters because tables get *removed* in this phase (B1 absorbs `favorite_devices`).
  * The downgrade case is covered too, so checking out an older branch does not wedge the app.
  *
- * TODO(build-variant): this is unconditional, so a **release** build would wipe user data
+ * TODO(F0, release prep only): this is unconditional, so a **release** build would wipe user data
  *  just as silently as a debug one. The wipe must become debug-only before anything ships.
  *  That needs a build-variant value visible from `commonMain`, which this project cannot
  *  currently express: there is no `buildSrc` or `build-logic`, and Android's `BuildConfig` is
@@ -26,7 +26,7 @@ import kotlinx.coroutines.IO
  *  Tracked in claude-mem `deferred-debts`, and in the roadmap's Deferred section as a
  *  release gate.
  *
- * TODO(fixtures): keep a populated `.db` snapshot per schema version alongside the exported
+ * TODO(F0, release prep only): keep a populated `.db` snapshot per schema version alongside the exported
  *  JSON in `shared/schemas/`. Two jobs: migrating a real old database forward is the only
  *  honest test of a chain, and a ready-made database saves every test from seeding by hand.
  *  Snapshots must come from a reproducible fixture builder, not be pulled off a phone -- and
