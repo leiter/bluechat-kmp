@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bluechat.domain.model.ConnectionState
 import com.bluechat.domain.repository.BleController
-import com.bluechat.domain.repository.FavoriteDeviceRepository
+import com.bluechat.domain.repository.ContactRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -14,7 +14,7 @@ import kotlinx.coroutines.launch
 
 class DeviceViewModel(
     private val bleController: BleController,
-    private val favoriteDeviceRepository: FavoriteDeviceRepository,
+    private val contactRepository: ContactRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DeviceUiState())
@@ -24,14 +24,16 @@ class DeviceViewModel(
         bleController.scannedDevices,
         bleController.connectionState,
         bleController.lastError,
-        favoriteDeviceRepository.getAllFavorites(),
-    ) { state, devices, connState, error, favorites ->
+        contactRepository.observeAll(),
+    ) { state, devices, connState, error, contacts ->
         state.copy(
             scannedDevices = devices,
             isConnecting = connState == ConnectionState.Connecting,
             isConnected = connState == ConnectionState.Connected,
-            favoriteDevices = favorites,
-            favoriteDeviceIds = favorites.map { it.identifier }.toSet(),
+            favouriteContacts = contacts.filter { it.isFavourite },
+            // Built from the whole contact list rather than queried per row, so the list does
+            // not fire one database read per scan result per recomposition.
+            knownByTransportId = contacts.associateBy { it.lastTransportId },
             // A scan that dies (missing permission, Bluetooth off, location off) otherwise
             // looks exactly like "no devices nearby".
             errorMessage = error ?: state.errorMessage,
@@ -68,9 +70,16 @@ class DeviceViewModel(
         }
     }
 
-    fun toggleFavorite(deviceId: String, deviceName: String?) {
+    /**
+     * Takes a *contact* id, not a device address.
+     *
+     * Phase 9's version took whatever identifier the scan row carried, which is why favourites
+     * did not survive address randomisation. The screen only offers a star on rows it could
+     * resolve to a contact, so there is no caller without one.
+     */
+    fun toggleFavourite(contactId: String) {
         viewModelScope.launch {
-            favoriteDeviceRepository.toggleFavorite(deviceId, deviceName)
+            contactRepository.toggleFavourite(contactId)
         }
     }
 

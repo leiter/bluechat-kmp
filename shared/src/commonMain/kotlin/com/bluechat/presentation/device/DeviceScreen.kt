@@ -24,7 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.bluechat.domain.model.BleDevice
+import com.bluechat.presentation.components.ContactListItem
 import com.bluechat.presentation.components.DeviceListItem
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,7 +34,7 @@ fun DeviceScreen(
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onDeviceClicked: (String) -> Unit,
-    onToggleFavorite: (deviceId: String, deviceName: String?) -> Unit = { _, _ -> },
+    onToggleFavourite: (contactId: String) -> Unit = {},
     onStartServer: () -> Unit = {},
     onSettingsClicked: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -102,26 +102,22 @@ fun DeviceScreen(
             }
 
             LazyColumn(modifier = Modifier.weight(1f)) {
-                if (state.favoriteDevices.isNotEmpty()) {
+                if (state.favouriteContacts.isNotEmpty()) {
                     item {
                         Text(
-                            text = "Favorites",
+                            text = "Favourites",
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
                     }
-                    items(state.favoriteDevices) { favorite ->
-                        DeviceListItem(
-                            device = BleDevice(
-                                identifier = favorite.identifier,
-                                name = favorite.name,
-                                rssi = null,
-                            ),
-                            onClick = { onDeviceClicked(favorite.identifier) },
-                            isFavorite = true,
-                            onFavoriteClick = {
-                                onToggleFavorite(favorite.identifier, favorite.name)
-                            },
+                    items(state.favouriteContacts, key = { it.contactId }) { contact ->
+                        // A favourite is shown whether or not it is advertising right now --
+                        // that is the whole reason it is stored against an identity.
+                        ContactListItem(
+                            contact = contact,
+                            isInRange = state.knownByTransportId.containsKey(contact.lastTransportId),
+                            onClick = { onDeviceClicked(contact.lastTransportId) },
+                            onFavouriteClick = { onToggleFavourite(contact.contactId) },
                         )
                         HorizontalDivider()
                     }
@@ -135,12 +131,18 @@ fun DeviceScreen(
                     }
                 }
 
-                items(state.scannedDevices) { device ->
+                items(state.scannedDevices, key = { it.identifier }) { device ->
+                    val contact = state.knownByTransportId[device.identifier]
                     DeviceListItem(
-                        device = device,
+                        // A recognised device is shown under the name we know them by, not the
+                        // name their adapter happens to be advertising.
+                        device = contact?.let { device.copy(name = it.displayName) } ?: device,
                         onClick = { onDeviceClicked(device.identifier) },
-                        isFavorite = device.identifier in state.favoriteDeviceIds,
-                        onFavoriteClick = { onToggleFavorite(device.identifier, device.name) },
+                        isFavorite = contact?.isFavourite == true,
+                        // No star for a stranger. A favourite has to be stored against an
+                        // identity to mean anything, and we do not have one until they have
+                        // announced themselves -- so the affordance only appears once we do.
+                        onFavoriteClick = contact?.let { { onToggleFavourite(it.contactId) } },
                     )
                     HorizontalDivider()
                 }

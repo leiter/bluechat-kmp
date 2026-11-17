@@ -90,17 +90,35 @@ A3 gates most of Phase D.
 
 | # | Task | Notes |
 |---|------|-------|
-| B1 | `Contact` entity + Room table | `contactId` (stable id from A1), local `displayName` override, `lastSeen`, `isBlocked`, `isFavourite`, avatar seed. No migration — version bump and wipe. |
+| B1 | `Contact` entity + Room table | **DONE (2026-11-17).** `contacts` (schema v7) is the Phase A `peers` table grown up; `favorite_devices` is gone, absorbed rather than kept alongside. |
 | B2 | Add-contact flow | From a discovered device; auto-create on first successful exchange. |
 | B3 | Contacts screen | List, search, rename, delete, block. |
 | B4 | Profile exchange | Send own display name on connect; store as the peer's *claimed* name, with the local nickname taking precedence. |
 | B5 | Presence | In-range / out-of-range derived from scan results plus connection state. |
 
 Phase 9 (merged) delivered a `favorite_devices` table with a star control and a Favourites
-section on the device list. That is not B1: it keys on the **transport address**, not the
-stable peer id from A1, so a favourite does not survive address randomisation. B1 should
-absorb it rather than sit alongside it. No migration is written for that: the version is
-bumped and the database is recreated empty (see the schema policy decision below).
+section on the device list. That was not B1: it keyed on the **transport address**, not the
+stable peer id from A1, so a favourite did not survive address randomisation. B1 absorbed it
+rather than leaving it alongside -- there is now one row per identity and no second table.
+
+**What B1 changed, beyond the table.**
+
+- Two name columns, not one. `announcedName` is what the peer *claims* (arrives over the air,
+  untrusted); `nickname` is what *we* call them locally and always wins. The resolved name is
+  computed in the domain model, never stored, so a third copy cannot go stale. B4 then becomes
+  pure wiring: it fills `announcedName` and touches nothing else.
+- `ContactDao.touch` is an explicit `ON CONFLICT DO UPDATE` rather than `@Upsert` with an
+  entity. An entity upsert would reconstruct `nickname`, `isFavourite` and `isBlocked` from
+  packet data and clobber the columns the *user* owns, and the previous read-then-write had a
+  window in which a favourite toggled between the two halves was lost.
+- `isBlocked` is enforced in `IncomingMessageCoordinator`, the one process-wide inbound entry
+  point: a blocked contact's message is not stored and raises no notification. The flag is real
+  rather than decorative, even though B3 has yet to expose a way to set it.
+- **A star is only offered for a device we have already met.** A favourite stored against a
+  stranger would have nothing stable to attach to, which is the original defect. Strangers get
+  no star; the affordance appears once an identity has been announced. Verified on device.
+
+No migration was written: the version was bumped 6 -> 7 and the database recreated empty.
 
 B4 also removes the current need to hijack the **system-wide Bluetooth adapter name** as the
 identity broadcast — see defect #7 in the test findings.

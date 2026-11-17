@@ -86,12 +86,22 @@ class IncomingMessageCoordinator(
                     peerId = message.peerId,
                     transportId = message.transportId,
                 )
+                val sender = peerDirectory.contactFor(message.peerId)
+
+                // Blocking is enforced here, at the single process-wide entry point, rather
+                // than in the UI: a blocked contact's message must not be stored, must not be
+                // notified, and must not quietly appear in history later. Their lastSeenAt is
+                // still updated above, which is what lets B3 show "last tried to reach you".
+                if (sender?.isBlocked == true) return
+
                 store(message.peerId, message.body, message.messageId)
                 // Mirror into the group thread so Server Mode's Group Chat shows the
                 // conversation, not just our own outgoing broadcasts.
                 store(BROADCAST_DEVICE_ID, message.body, message.messageId)
-                val sender = peerDirectory.nameOf(message.peerId) ?: "Unknown"
-                messageNotifier.showMessageNotification(sender, message.body)
+                messageNotifier.showMessageNotification(
+                    sender?.displayName ?: "Unknown",
+                    message.body,
+                )
             }
         }
     }

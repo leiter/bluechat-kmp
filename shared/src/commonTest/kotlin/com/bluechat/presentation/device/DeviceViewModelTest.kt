@@ -4,9 +4,9 @@ import app.cash.turbine.test
 import com.bluechat.domain.model.BleDevice
 import com.bluechat.domain.model.ConnectionState
 import com.bluechat.domain.model.PeerMessage
-import com.bluechat.domain.model.FavoriteDevice
+import com.bluechat.domain.model.Contact
 import com.bluechat.domain.repository.BleController
-import com.bluechat.domain.repository.FavoriteDeviceRepository
+import com.bluechat.domain.repository.ContactRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -22,6 +22,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -29,14 +30,14 @@ class DeviceViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeBleController: FakeBleController
-    private lateinit var fakeFavoriteDeviceRepository: FakeFavoriteDeviceRepository
+    private lateinit var fakeContactRepository: FakeContactRepository
     private lateinit var viewModel: DeviceViewModel
 
     @BeforeTest
     fun setup() {
         Dispatchers.setMain(testDispatcher)
         fakeBleController = FakeBleController()
-        fakeFavoriteDeviceRepository = FakeFavoriteDeviceRepository()
+        fakeContactRepository = FakeContactRepository()
     }
 
     @AfterTest
@@ -47,7 +48,7 @@ class DeviceViewModelTest {
     private fun createViewModel(): DeviceViewModel {
         return DeviceViewModel(
             bleController = fakeBleController,
-            favoriteDeviceRepository = fakeFavoriteDeviceRepository,
+            contactRepository = fakeContactRepository,
         )
     }
 
@@ -220,6 +221,125 @@ class DeviceViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // --- B1: favourites keyed on identity, not on a Bluetooth address ---
+
+    @Test
+    fun `a scanned device is recognised when a contact was last seen at that address`() = runTest {
+        fakeContactRepository.addContact(
+            contactId = "peer-abc",
+            announcedName = "Alice",
+            transportId = "AA:BB:CC:DD:EE:FF",
+        )
+        viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            fakeBleController.addScannedDevice(
+                BleDevice(identifier = "AA:BB:CC:DD:EE:FF", name = "Pixel 7a", rssi = -40)
+            )
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val state = awaitItem()
+            assertEquals("peer-abc", state.knownByTransportId["AA:BB:CC:DD:EE:FF"]?.contactId)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `an unrecognised scanned device resolves to no contact so no star is offered`() = runTest {
+        viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            fakeBleController.addScannedDevice(
+                BleDevice(identifier = "11:22:33:44:55:66", name = "Someone else", rssi = -70)
+            )
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val state = awaitItem()
+            assertEquals(1, state.scannedDevices.size)
+            // The screen keys the star off this being non-null, so a stranger gets none.
+            assertNull(state.knownByTransportId["11:22:33:44:55:66"])
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `a favourite survives the contact moving to a new Bluetooth address`() = runTest {
+        // The regression this whole change exists for. Phase 9 stored the favourite against
+        // the address, so randomisation detached it from the person.
+        fakeContactRepository.addContact(
+            contactId = "peer-abc",
+            announcedName = "Alice",
+            transportId = "AA:BB:CC:DD:EE:FF",
+            isFavourite = true,
+        )
+        viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem() // stateIn's initial default
+            val before = awaitItem()
+            assertEquals(1, before.favouriteContacts.size)
+            assertEquals("AA:BB:CC:DD:EE:FF", before.favouriteContacts.first().lastTransportId)
+
+            // Same person, new random address -- exactly what Android does periodically.
+            fakeContactRepository.moveTo("peer-abc", "99:88:77:66:55:44")
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val after = expectMostRecentItem()
+            // Still a favourite, because the favourite was never stored against the address.
+            assertTrue(after.favouriteContacts.any { it.contactId == "peer-abc" })
+            // And she is now recognised at the new address instead of the old one.
+            assertEquals("peer-abc", after.knownByTransportId["99:88:77:66:55:44"]?.contactId)
+            assertNull(after.knownByTransportId["AA:BB:CC:DD:EE:FF"])
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `toggling a favourite acts on the contact id`() = runTest {
+        fakeContactRepository.addContact(contactId = "peer-abc", announcedName = "Alice")
+        viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.toggleFavourite("peer-abc")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertTrue(fakeContactRepository.contact("peer-abc")?.isFavourite == true)
+
+        viewModel.toggleFavourite("peer-abc")
+        testDispatcher.scheduler.advanceUntilIdle()
+        assertFalse(fakeContactRepository.contact("peer-abc")?.isFavourite == true)
+    }
+
+    @Test
+    fun `a recognised device is listed under the name we know rather than the advertised one`() = runTest {
+        fakeContactRepository.addContact(
+            contactId = "peer-abc",
+            announcedName = "Alice",
+            nickname = "Mum",
+            transportId = "AA:BB:CC:DD:EE:FF",
+        )
+        viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            fakeBleController.addScannedDevice(
+                BleDevice(identifier = "AA:BB:CC:DD:EE:FF", name = "Pixel 7a", rssi = -40)
+            )
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            val state = awaitItem()
+            // Nickname beats the announced name, which beats the adapter name.
+            assertEquals("Mum", state.knownByTransportId["AA:BB:CC:DD:EE:FF"]?.displayName)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
 }
 
 // Test doubles
@@ -296,28 +416,75 @@ class FakeBleController : BleController {
     override fun release() {}
 }
 
-class FakeFavoriteDeviceRepository : FavoriteDeviceRepository {
-    private val _favorites = MutableStateFlow<List<FavoriteDevice>>(emptyList())
+class FakeContactRepository : ContactRepository {
+    private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
 
-    override fun getAllFavorites(): Flow<List<FavoriteDevice>> = _favorites
+    override fun observeAll(): Flow<List<Contact>> = _contacts
 
-    override fun isFavorite(identifier: String): Flow<Boolean> {
-        return MutableStateFlow(_favorites.value.any { it.identifier == identifier })
-    }
+    override fun observeFavourites(): Flow<List<Contact>> =
+        MutableStateFlow(_contacts.value.filter { it.isFavourite })
 
-    override suspend fun addFavorite(identifier: String, name: String?) {
-        _favorites.value = _favorites.value + FavoriteDevice(identifier, name, kotlin.time.Clock.System.now().toEpochMilliseconds())
-    }
-
-    override suspend fun removeFavorite(identifier: String) {
-        _favorites.value = _favorites.value.filterNot { it.identifier == identifier }
-    }
-
-    override suspend fun toggleFavorite(identifier: String, name: String?) {
-        if (_favorites.value.any { it.identifier == identifier }) {
-            removeFavorite(identifier)
-        } else {
-            addFavorite(identifier, name)
+    override suspend fun setFavourite(contactId: String, favourite: Boolean) {
+        _contacts.value = _contacts.value.map {
+            if (it.contactId == contactId) it.copy(isFavourite = favourite) else it
         }
     }
+
+    override suspend fun toggleFavourite(contactId: String) {
+        _contacts.value = _contacts.value.map {
+            if (it.contactId == contactId) it.copy(isFavourite = !it.isFavourite) else it
+        }
+    }
+
+    override suspend fun setNickname(contactId: String, nickname: String?) {
+        _contacts.value = _contacts.value.map {
+            if (it.contactId == contactId) {
+                it.copy(nickname = nickname?.trim()?.takeIf(String::isNotEmpty))
+            } else {
+                it
+            }
+        }
+    }
+
+    override suspend fun setBlocked(contactId: String, blocked: Boolean) {
+        _contacts.value = _contacts.value.map {
+            if (it.contactId == contactId) it.copy(isBlocked = blocked) else it
+        }
+    }
+
+    override suspend fun isBlocked(contactId: String): Boolean =
+        _contacts.value.any { it.contactId == contactId && it.isBlocked }
+
+    override suspend fun delete(contactId: String) {
+        _contacts.value = _contacts.value.filterNot { it.contactId == contactId }
+    }
+
+    fun addContact(
+        contactId: String,
+        announcedName: String? = null,
+        nickname: String? = null,
+        transportId: String = contactId,
+        isFavourite: Boolean = false,
+        isBlocked: Boolean = false,
+    ) {
+        _contacts.value = _contacts.value + Contact(
+            contactId = contactId,
+            announcedName = announcedName,
+            nickname = nickname,
+            lastTransportId = transportId,
+            firstSeenAt = 0L,
+            lastSeenAt = 0L,
+            isFavourite = isFavourite,
+            isBlocked = isBlocked,
+        )
+    }
+
+    /** Simulates the same contact reappearing at a new Bluetooth address. */
+    fun moveTo(contactId: String, transportId: String) {
+        _contacts.value = _contacts.value.map {
+            if (it.contactId == contactId) it.copy(lastTransportId = transportId) else it
+        }
+    }
+
+    fun contact(contactId: String): Contact? = _contacts.value.find { it.contactId == contactId }
 }

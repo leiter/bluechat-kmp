@@ -23,18 +23,18 @@ import androidx.room.RoomDatabaseConstructor
 @Database(
     entities = [
         ChatMessageEntity::class,
-        FavoriteDeviceEntity::class,
         PendingMessageEntity::class,
-        PeerEntity::class,
+        ContactEntity::class,
     ],
-    version = 6,
+    // 7: B1. `peers` grew into `contacts` and `favorite_devices` was dropped into it. No
+    // migration -- see the schema policy above.
+    version = 7,
 )
 @ConstructedBy(ChatDatabaseConstructor::class)
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
-    abstract fun favoriteDeviceDao(): FavoriteDeviceDao
     abstract fun pendingMessageDao(): PendingMessageDao
-    abstract fun peerDao(): PeerDao
+    abstract fun contactDao(): ContactDao
 }
 
 @Suppress("NO_ACTUAL_FOR_EXPECT")

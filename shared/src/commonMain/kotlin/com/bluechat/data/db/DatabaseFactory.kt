@@ -10,7 +10,13 @@ import kotlinx.coroutines.IO
  *
  * `dropAllTables = true` makes the wipe total rather than leaving orphaned tables behind,
  * which matters because tables get *removed* in this phase (B1 absorbs `favorite_devices`).
- * The downgrade case is covered too, so checking out an older branch does not wedge the app.
+ *
+ * This single call also covers downgrades, and it must stay a single call. Adding
+ * `fallbackToDestructiveMigrationOnDowngrade` alongside it looks additive but is not: both
+ * write Room's one `requireMigration` flag, and the downgrade variant sets it back to `true`.
+ * Having both silently disabled the fallback entirely, and the app died on launch with
+ * "A migration from 6 to 7 was required but not found" -- the very error this is here to
+ * prevent. Caught on a device, not by the test suite, which never opens an older database.
  *
  * TODO(F0, release prep only): this is unconditional, so a **release** build would wipe user data
  *  just as silently as a debug one. The wipe must become debug-only before anything ships.
@@ -35,7 +41,6 @@ import kotlinx.coroutines.IO
 fun createDatabase(builder: RoomDatabase.Builder<ChatDatabase>): ChatDatabase {
     return builder
         .fallbackToDestructiveMigration(dropAllTables = true)
-        .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()

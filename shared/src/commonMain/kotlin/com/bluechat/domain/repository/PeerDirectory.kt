@@ -1,5 +1,6 @@
 package com.bluechat.domain.repository
 
+import com.bluechat.domain.model.Contact
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -30,6 +31,18 @@ interface PeerDirectory {
     /** Display name a peer announced, if we have ever heard from it. */
     fun observeDisplayName(transportId: String): Flow<String?>
 
-    /** Display name for a known peer id, or `null` if we have never heard from it. */
+    /**
+     * Display name for a known peer id, or `null` if we have never heard from it.
+     *
+     * This is the *resolved* name: a local nickname wins over whatever the peer announced.
+     */
     suspend fun nameOf(peerId: String): String?
+
+    /**
+     * The full contact record for a known peer id, or `null` if we have never heard from it.
+     *
+     * The message path needs more than a name -- it has to know whether the sender is blocked
+     * before it stores or notifies.
+     */
+    suspend fun contactFor(peerId: String): Contact?
 }
