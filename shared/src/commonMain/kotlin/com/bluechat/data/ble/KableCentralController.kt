@@ -138,7 +138,13 @@ class KableCentralController(
                     val existing = devices.indexOfFirst { it.identifier == id }
                     val device = BleDevice(
                         identifier = id,
-                        name = advertisement.name ?: advertisement.peripheralName,
+                        // `peripheralName` is what the device is broadcasting right now;
+                        // `name` is the OS's cached name for that address, which can be stale
+                        // for as long as the cache lives. Preferring the cache made a peer go
+                        // on showing a name it had stopped advertising -- visible as soon as
+                        // B4 stopped renaming the adapter, when a server advertising "Pixel 2"
+                        // still listed as "Bluechat" on a phone that had seen the old build.
+                        name = advertisement.peripheralName ?: advertisement.name,
                         rssi = advertisement.rssi,
                     )
                     if (existing >= 0) {

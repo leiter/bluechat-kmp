@@ -57,6 +57,7 @@ fun ConversationsScreen(
     onToggleMuted: (String, Boolean) -> Unit,
     onSetArchived: (String, Boolean) -> Unit,
     onToggleShowArchived: () -> Unit,
+    onContacts: () -> Unit,
     onServerMode: () -> Unit,
     onSettingsClicked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -72,6 +73,9 @@ fun ConversationsScreen(
                         TextButton(onClick = onToggleShowArchived) {
                             Text(if (state.showArchived) "Back" else "Archived (${state.archivedCount})")
                         }
+                    }
+                    IconButton(onClick = onContacts) {
+                        Text("\uD83D\uDC64", style = MaterialTheme.typography.titleMedium)
                     }
                     IconButton(onClick = onServerMode) {
                         Text("📡", style = MaterialTheme.typography.titleMedium)

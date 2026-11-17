@@ -17,6 +17,7 @@ import com.bluechat.domain.repository.MessageQueueRepository
 import com.bluechat.domain.repository.PeerDirectory
 import com.bluechat.domain.session.BleSessionMonitor
 import com.bluechat.presentation.chat.ChatViewModel
+import com.bluechat.presentation.contacts.ContactsViewModel
 import com.bluechat.presentation.conversations.ConversationsViewModel
 import com.bluechat.presentation.device.DeviceViewModel
 import com.bluechat.presentation.server.BroadcastChatViewModel
@@ -44,6 +45,7 @@ val sharedModule = module {
     singleOf(::IncomingMessageCoordinator)
     singleOf(::BleSessionMonitor)
 
+    viewModelOf(::ContactsViewModel)
     viewModelOf(::ConversationsViewModel)
     viewModelOf(::DeviceViewModel)
     viewModel { params -> ChatViewModel(params.get(), get(), get(), get(), get()) }

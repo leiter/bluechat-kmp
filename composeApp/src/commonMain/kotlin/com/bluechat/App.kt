@@ -10,6 +10,8 @@ import androidx.navigation.compose.rememberNavController
 import com.bluechat.domain.repository.ThemePreference
 import com.bluechat.domain.model.Conversation
 import com.bluechat.presentation.chat.ChatScreen
+import com.bluechat.presentation.contacts.ContactsScreen
+import com.bluechat.presentation.contacts.ContactsViewModel
 import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.conversations.ConversationsScreen
 import com.bluechat.presentation.conversations.ConversationsViewModel
@@ -75,6 +77,7 @@ fun App() {
                     onToggleMuted = viewModel::toggleMuted,
                     onSetArchived = viewModel::setArchived,
                     onToggleShowArchived = viewModel::toggleShowArchived,
+                    onContacts = { navController.navigate("contacts") },
                     onServerMode = { navController.navigate("server") },
                     onSettingsClicked = { navController.navigate("settings") },
                 )
@@ -166,6 +169,21 @@ fun App() {
                         viewModel.disconnect()
                         navController.popBackStack()
                     },
+                )
+            }
+
+            composable("contacts") {
+                val viewModel = koinViewModel<ContactsViewModel>()
+                val state by viewModel.state.collectAsStateWithLifecycle()
+
+                ContactsScreen(
+                    state = state,
+                    onQueryChanged = viewModel::onQueryChanged,
+                    onRename = viewModel::rename,
+                    onSetBlocked = viewModel::setBlocked,
+                    onSetFavourite = viewModel::setFavourite,
+                    onDelete = viewModel::delete,
+                    onBack = { navController.popBackStack() },
                 )
             }
 

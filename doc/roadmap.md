@@ -92,8 +92,8 @@ A3 gates most of Phase D.
 |---|------|-------|
 | B1 | `Contact` entity + Room table | **DONE (2026-11-17).** `contacts` (schema v7) is the Phase A `peers` table grown up; `favorite_devices` is gone, absorbed rather than kept alongside. |
 | B2 | Add-contact flow | From a discovered device; auto-create on first successful exchange. |
-| B3 | Contacts screen | List, search, rename, delete, block. |
-| B4 | Profile exchange | Send own display name on connect; store as the peer's *claimed* name, with the local nickname taking precedence. |
+| B3 | Contacts screen | **DONE (2026-11-18).** List, search, rename, favourite, block, delete. Reached from the chat list. |
+| B4 | Profile exchange | **DONE (2026-11-18).** The wire half already existed; B4 removed the adapter-name hijack that it made unnecessary (defect #7). |
 | B5 | Presence | In-range / out-of-range derived from scan results plus connection state. |
 
 Phase 9 (merged) delivered a `favorite_devices` table with a star control and a Favourites
@@ -120,8 +120,25 @@ rather than leaving it alongside -- there is now one row per identity and no sec
 
 No migration was written: the version was bumped 6 -> 7 and the database recreated empty.
 
-B4 also removes the current need to hijack the **system-wide Bluetooth adapter name** as the
-identity broadcast — see defect #7 in the test findings.
+**B4 turned out to be mostly already built.** Both roles were already exchanging an
+`Envelope.Profile` on connect, and B1 had already split the claimed name from the local
+nickname. What remained was the consequence: the app no longer needs the advertisement to carry
+an identity, so it stopped hijacking the **system-wide Bluetooth adapter name** — defect #7.
+
+That hijack set `bluetoothAdapter.name`, the name the phone shows in car head units and every
+other device's pairing list, to this app's display name, restoring it on stop. If the process
+died while advertising, it was never restored at all. It is gone: the scan response now carries
+the phone's own name, unmodified, and identity travels over GATT where it belongs.
+
+Two consequences worth recording:
+
+- The advertised name is now the user's, so it can be any length. Rather than refuse to
+  advertise when it does not fit the 31-byte scan response, the server retries without the
+  name; a peer learns who we are on connect anyway.
+- Scanning preferred the OS's **cached** name for an address over the one being broadcast right
+  now. That was invisible while we controlled the adapter name, and became wrong the moment we
+  stopped: a server advertising "Pixel 2" still listed as "Bluechat" on a phone that had seen
+  the old build. The scan record now wins, with the cache as fallback.
 
 ---
 
