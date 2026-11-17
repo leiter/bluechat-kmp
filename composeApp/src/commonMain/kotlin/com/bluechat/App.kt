@@ -50,6 +50,7 @@ fun App() {
                         viewModel.connectToDevice(deviceId)
                         navController.navigate("chat/$deviceId")
                     },
+                    onToggleFavorite = viewModel::toggleFavorite,
                     onStartServer = {
                         navController.navigate("server")
                     },
@@ -71,6 +72,7 @@ fun App() {
                         viewModel.disconnect()
                         navController.popBackStack()
                     },
+                    onTextChanged = viewModel::onTextChanged,
                 )
             }
 

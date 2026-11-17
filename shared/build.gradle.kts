@@ -61,13 +61,15 @@ kotlin {
             implementation(libs.kable.core)
         }
 
-        commonTest.dependencies {
-            implementation(kotlin("test"))
-        }
-
         androidMain.dependencies {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.koin.android)
+        }
+
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.turbine)
         }
     }
 }

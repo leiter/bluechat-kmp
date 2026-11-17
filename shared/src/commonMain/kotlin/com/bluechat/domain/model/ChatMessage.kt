@@ -7,4 +7,6 @@ data class ChatMessage(
     val isFromLocalUser: Boolean,
     val timestamp: Long = 0,
     val deliveryStatus: DeliveryStatus = DeliveryStatus.Sent,
+    val messageUuid: String = "",
+    val readAt: Long? = null,
 )

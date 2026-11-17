@@ -4,10 +4,14 @@ import com.bluechat.data.ble.KableCentralController
 import com.bluechat.data.db.ChatDatabase
 import com.bluechat.data.db.createDatabase
 import com.bluechat.data.repository.ChatRepositoryImpl
+import com.bluechat.data.repository.FavoriteDeviceRepositoryImpl
+import com.bluechat.data.repository.MessageQueueRepositoryImpl
 import com.bluechat.data.repository.PeerDirectoryImpl
 import com.bluechat.domain.messaging.IncomingMessageCoordinator
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
+import com.bluechat.domain.repository.FavoriteDeviceRepository
+import com.bluechat.domain.repository.MessageQueueRepository
 import com.bluechat.domain.repository.PeerDirectory
 import com.bluechat.domain.session.BleSessionMonitor
 import com.bluechat.presentation.chat.ChatViewModel
@@ -25,15 +29,19 @@ import org.koin.dsl.module
 val sharedModule = module {
     single { createDatabase(get()) }
     single { get<ChatDatabase>().chatMessageDao() }
+    single { get<ChatDatabase>().favoriteDeviceDao() }
+    single { get<ChatDatabase>().pendingMessageDao() }
     single { get<ChatDatabase>().peerDao() }
     singleOf(::ChatRepositoryImpl) bind ChatRepository::class
+    singleOf(::FavoriteDeviceRepositoryImpl) bind FavoriteDeviceRepository::class
+    singleOf(::MessageQueueRepositoryImpl) bind MessageQueueRepository::class
     singleOf(::PeerDirectoryImpl) bind PeerDirectory::class
     singleOf(::KableCentralController) bind BleController::class
     singleOf(::IncomingMessageCoordinator)
     singleOf(::BleSessionMonitor)
 
     viewModelOf(::DeviceViewModel)
-    viewModel { params -> ChatViewModel(params.get(), get(), get(), get()) }
+    viewModel { params -> ChatViewModel(params.get(), get(), get(), get(), get()) }
     viewModelOf(::ServerViewModel)
     viewModel { params -> ServerChatViewModel(params.get(), get(), get(), get()) }
     viewModelOf(::BroadcastChatViewModel)

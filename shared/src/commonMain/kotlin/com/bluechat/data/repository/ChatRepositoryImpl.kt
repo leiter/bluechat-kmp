@@ -26,6 +26,22 @@ class ChatRepositoryImpl(
         dao.updateMessageStatus(id, status.name)
     }
 
+    override suspend fun updateMessageStatusByUuid(messageUuid: String, status: DeliveryStatus, readAt: Long?) {
+        dao.updateMessageStatusByUuid(messageUuid, status.name, readAt)
+    }
+
+    override suspend fun getMessageByUuid(messageUuid: String): ChatMessage? {
+        return dao.getMessageByUuid(messageUuid)?.toDomain()
+    }
+
+    override suspend fun getUnreadMessages(deviceId: String): List<ChatMessage> {
+        return dao.getUnreadMessagesForDevice(deviceId).map { it.toDomain() }
+    }
+
+    override suspend fun markMessageAsRead(id: Long, readAt: Long) {
+        dao.markMessageAsRead(id, readAt)
+    }
+
     override suspend fun deleteMessagesForDevice(deviceId: String) {
         dao.deleteMessagesForDevice(deviceId)
     }
@@ -38,6 +54,8 @@ private fun ChatMessageEntity.toDomain() = ChatMessage(
     isFromLocalUser = isFromLocalUser,
     timestamp = timestamp,
     deliveryStatus = try { DeliveryStatus.valueOf(deliveryStatus) } catch (_: Exception) { DeliveryStatus.Sent },
+    messageUuid = messageUuid,
+    readAt = readAt,
 )
 
 private fun ChatMessage.toEntity() = ChatMessageEntity(
@@ -47,4 +65,6 @@ private fun ChatMessage.toEntity() = ChatMessageEntity(
     isFromLocalUser = isFromLocalUser,
     timestamp = timestamp,
     deliveryStatus = deliveryStatus.name,
+    messageUuid = messageUuid,
+    readAt = readAt,
 )

@@ -1,5 +1,5 @@
 package com.bluechat.domain.model
 
 enum class DeliveryStatus {
-    Sending, Sent, Failed,
+    Queued, Sending, Sent, Delivered, Read, Failed,
 }

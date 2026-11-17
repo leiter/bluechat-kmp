@@ -28,4 +28,18 @@ sealed interface PeerMessage {
         override val peerId: String,
         val displayName: String,
     ) : PeerMessage
+
+    /** The peer has read the message we sent with [messageId]. */
+    data class ReadReceipt(
+        override val transportId: String,
+        override val peerId: String,
+        val messageId: String,
+    ) : PeerMessage
+
+    /** Transient typing signal. Never persisted. */
+    data class Typing(
+        override val transportId: String,
+        override val peerId: String,
+        val isTyping: Boolean,
+    ) : PeerMessage
 }

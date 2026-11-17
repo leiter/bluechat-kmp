@@ -8,10 +8,20 @@ import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 
-@Database(entities = [ChatMessageEntity::class, PeerEntity::class], version = 3)
+@Database(
+    entities = [
+        ChatMessageEntity::class,
+        FavoriteDeviceEntity::class,
+        PendingMessageEntity::class,
+        PeerEntity::class,
+    ],
+    version = 6,
+)
 @ConstructedBy(ChatDatabaseConstructor::class)
 abstract class ChatDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
+    abstract fun favoriteDeviceDao(): FavoriteDeviceDao
+    abstract fun pendingMessageDao(): PendingMessageDao
     abstract fun peerDao(): PeerDao
 
     companion object {
@@ -23,12 +33,66 @@ abstract class ChatDatabase : RoomDatabase() {
             }
         }
 
-        /**
-         * Adds the peer directory. Existing messages are left keyed on the Bluetooth address
-         * they were stored under -- there is no way to recover which stable identity they
-         * belonged to, so that history stays in its own conversation.
-         */
         val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS favorite_devices (
+                        identifier TEXT PRIMARY KEY NOT NULL,
+                        name TEXT,
+                        addedAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        deviceId TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        retryCount INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    "ALTER TABLE chat_messages ADD COLUMN messageUuid TEXT NOT NULL DEFAULT ''"
+                )
+                connection.execSQL(
+                    "ALTER TABLE chat_messages ADD COLUMN readAt INTEGER DEFAULT NULL"
+                )
+            }
+        }
+
+        /**
+         * Adds the peer directory.
+         *
+         * NOTE ON NUMBERING: this shipped on the Phase A branch as MIGRATION_2_3, which
+         * collided with the favourites migration of the same number on `dev`. Two different
+         * schemas claimed version 3. The published chain (favourites, pending messages,
+         * message uuid) is authoritative because it may already exist in installs, so the
+         * peer directory was renumbered to the end rather than wedged into the middle.
+         *
+         * A device that ran the pre-merge Phase A build has a database stamped version 3 that
+         * contains `peers` but not `favorite_devices`. Room will try to run 3->4 on it and
+         * fail. Those installs must clear their app data; there is no in-place repair, and the
+         * only two that existed are the test phones.
+         *
+         * Existing messages keep the key they were stored under -- there is no way to recover
+         * which stable identity an old Bluetooth address belonged to, so that history stays in
+         * its own conversation.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
                     """

@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.bluechat.domain.model.BleDevice
 
@@ -19,6 +22,8 @@ import com.bluechat.domain.model.BleDevice
 fun DeviceListItem(
     device: BleDevice,
     onClick: () -> Unit,
+    isFavorite: Boolean = false,
+    onFavoriteClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -46,6 +51,19 @@ fun DeviceListItem(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (onFavoriteClick != null) {
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = onFavoriteClick,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Text(
+                    text = if (isFavorite) "\u2605" else "\u2606", // Filled star vs outline star
+                    style = MaterialTheme.typography.titleLarge,
+                    color = if (isFavorite) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

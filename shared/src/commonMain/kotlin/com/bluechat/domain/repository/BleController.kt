@@ -16,6 +16,12 @@ interface BleController {
     /** Decoded messages from the connected peripheral. */
     val incomingMessages: Flow<PeerMessage>
 
+    /** How many reconnect attempts have been made for the current drop; 0 when connected. */
+    val reconnectAttempt: StateFlow<Int>
+
+    /** Signal strength of the live connection, or `null` when it is not known. */
+    val rssi: StateFlow<Int?>
+
     /**
      * Last scan/connect failure, or `null` if there is nothing to report. Errors are surfaced
      * here rather than thrown away so the UI can tell the user why nothing is happening.
@@ -28,8 +34,19 @@ interface BleController {
     suspend fun connect(deviceId: String)
     suspend fun disconnect()
 
+    /** Disconnects and suppresses auto-reconnect, for when the user asked to leave. */
+    fun disconnectIntentionally()
+
+    fun enableAutoReconnect(enabled: Boolean)
+
     /** Sends a chat message. [messageId] is carried on the wire so the peer can de-duplicate. */
     suspend fun send(messageId: String, body: String)
+
+    /** Tells the peer we have read their message [messageId]. */
+    suspend fun sendReadReceipt(messageId: String)
+
+    /** Transient typing signal. Best-effort: failures are not worth reporting. */
+    suspend fun sendTypingIndicator(isTyping: Boolean)
 
     fun release()
 }

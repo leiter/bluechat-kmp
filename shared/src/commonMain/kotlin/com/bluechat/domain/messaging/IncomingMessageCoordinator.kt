@@ -1,6 +1,7 @@
 package com.bluechat.domain.messaging
 
 import com.bluechat.domain.model.ChatMessage
+import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.domain.model.PeerMessage
 import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.BleController
@@ -64,29 +65,46 @@ class IncomingMessageCoordinator(
                 )
             }
 
+            is PeerMessage.ReadReceipt -> {
+                // Process-wide on purpose: a receipt can arrive long after the sender closed
+                // the conversation, and the status must still be recorded.
+                chatRepository.updateMessageStatusByUuid(
+                    messageUuid = message.messageId,
+                    status = DeliveryStatus.Read,
+                    readAt = Clock.System.now().toEpochMilliseconds(),
+                )
+            }
+
+            is PeerMessage.Typing -> {
+                // Transient and only meaningful on screen; ChatViewModel handles it. Nothing
+                // to persist, and deliberately no notification.
+            }
+
             is PeerMessage.Text -> {
                 // No name to offer here, so an already-announced one is preserved.
                 peerDirectory.remember(
                     peerId = message.peerId,
                     transportId = message.transportId,
                 )
-                store(message.peerId, message.body)
+                store(message.peerId, message.body, message.messageId)
                 // Mirror into the group thread so Server Mode's Group Chat shows the
                 // conversation, not just our own outgoing broadcasts.
-                store(BROADCAST_DEVICE_ID, message.body)
+                store(BROADCAST_DEVICE_ID, message.body, message.messageId)
                 val sender = peerDirectory.nameOf(message.peerId) ?: "Unknown"
                 messageNotifier.showMessageNotification(sender, message.body)
             }
         }
     }
 
-    private suspend fun store(conversationId: String, text: String) {
+    private suspend fun store(conversationId: String, text: String, messageId: String) {
         chatRepository.insertMessage(
             ChatMessage(
                 deviceId = conversationId,
                 message = text,
                 isFromLocalUser = false,
                 timestamp = Clock.System.now().toEpochMilliseconds(),
+                // Kept so the read receipt we later send can name this exact message.
+                messageUuid = messageId,
             )
         )
     }

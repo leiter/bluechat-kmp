@@ -7,7 +7,13 @@ import kotlinx.coroutines.IO
 
 fun createDatabase(builder: RoomDatabase.Builder<ChatDatabase>): ChatDatabase {
     return builder
-        .addMigrations(ChatDatabase.MIGRATION_1_2, ChatDatabase.MIGRATION_2_3)
+        .addMigrations(
+            ChatDatabase.MIGRATION_1_2,
+            ChatDatabase.MIGRATION_2_3,
+            ChatDatabase.MIGRATION_3_4,
+            ChatDatabase.MIGRATION_4_5,
+            ChatDatabase.MIGRATION_5_6,
+        )
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
         .build()

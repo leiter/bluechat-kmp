@@ -17,4 +17,16 @@ internal fun Envelope.toPeerMessage(transportId: String): PeerMessage = when (th
         peerId = senderId,
         displayName = displayName,
     )
+
+    is Envelope.ReadReceipt -> PeerMessage.ReadReceipt(
+        transportId = transportId,
+        peerId = senderId,
+        messageId = messageId,
+    )
+
+    is Envelope.Typing -> PeerMessage.Typing(
+        transportId = transportId,
+        peerId = senderId,
+        isTyping = isTyping,
+    )
 }

@@ -41,4 +41,32 @@ sealed interface Envelope {
         override val senderId: String,
         val displayName: String,
     ) : Envelope
+
+    /**
+     * Acknowledges that a message was read. Carries the id the sender assigned in [Text], so
+     * the two sides agree on what is being acknowledged without relying on ordering.
+     *
+     * Ported from Phase 9's `BleMessageProtocol.TYPE_READ_RECEIPT`, which sent a bare uuid
+     * behind a one-byte tag. The behaviour is the same; it now rides the framed protocol, so
+     * it is no longer limited to what fits in a single unnegotiated 20-byte write.
+     */
+    @Serializable
+    @SerialName("read")
+    data class ReadReceipt(
+        override val senderId: String,
+        val messageId: String,
+    ) : Envelope
+
+    /**
+     * Transient "peer is typing" signal. Deliberately carries no id and is never persisted:
+     * it is only meaningful while the connection is up.
+     *
+     * Ported from Phase 9's `BleMessageProtocol.TYPE_TYPING_INDICATOR`.
+     */
+    @Serializable
+    @SerialName("typing")
+    data class Typing(
+        override val senderId: String,
+        val isTyping: Boolean,
+    ) : Envelope
 }

@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.bluechat.domain.model.BleDevice
 import com.bluechat.presentation.components.DeviceListItem
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -33,6 +34,7 @@ fun DeviceScreen(
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onDeviceClicked: (String) -> Unit,
+    onToggleFavorite: (deviceId: String, deviceName: String?) -> Unit = { _, _ -> },
     onStartServer: () -> Unit = {},
     onSettingsClicked: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -100,10 +102,45 @@ fun DeviceScreen(
             }
 
             LazyColumn(modifier = Modifier.weight(1f)) {
+                if (state.favoriteDevices.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Favorites",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
+                    items(state.favoriteDevices) { favorite ->
+                        DeviceListItem(
+                            device = BleDevice(
+                                identifier = favorite.identifier,
+                                name = favorite.name,
+                                rssi = null,
+                            ),
+                            onClick = { onDeviceClicked(favorite.identifier) },
+                            isFavorite = true,
+                            onFavoriteClick = {
+                                onToggleFavorite(favorite.identifier, favorite.name)
+                            },
+                        )
+                        HorizontalDivider()
+                    }
+                    item { Spacer(Modifier.height(16.dp)) }
+                    item {
+                        Text(
+                            text = "Nearby",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
+                }
+
                 items(state.scannedDevices) { device ->
                     DeviceListItem(
                         device = device,
                         onClick = { onDeviceClicked(device.identifier) },
+                        isFavorite = device.identifier in state.favoriteDeviceIds,
+                        onFavoriteClick = { onToggleFavorite(device.identifier, device.name) },
                     )
                     HorizontalDivider()
                 }

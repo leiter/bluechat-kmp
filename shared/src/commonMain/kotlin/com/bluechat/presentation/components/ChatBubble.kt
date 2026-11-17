@@ -21,7 +21,7 @@ import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.ui.theme.OldRose
 import com.bluechat.ui.theme.Vanilla
-import com.bluechat.util.formatTimestamp
+import com.bluechat.util.formatRelativeTime
 
 @Composable
 fun ChatBubble(
@@ -55,7 +55,7 @@ fun ChatBubble(
             Row(modifier = Modifier.align(Alignment.End)) {
                 if (message.timestamp > 0) {
                     Text(
-                        text = formatTimestamp(message.timestamp),
+                        text = formatRelativeTime(message.timestamp),
                         fontSize = 9.sp,
                         color = Color.Gray,
                     )
@@ -64,13 +64,18 @@ fun ChatBubble(
                     Spacer(Modifier.width(4.dp))
                     Text(
                         text = when (message.deliveryStatus) {
+                            DeliveryStatus.Queued -> "Queued"
                             DeliveryStatus.Sending -> "..."
                             DeliveryStatus.Sent -> "\u2713"
+                            DeliveryStatus.Delivered -> "\u2713\u2713"
+                            DeliveryStatus.Read -> "\u2713\u2713"
                             DeliveryStatus.Failed -> "Failed"
                         },
                         fontSize = 9.sp,
                         color = when (message.deliveryStatus) {
+                            DeliveryStatus.Queued -> Color(0xFFFFA500) // Orange
                             DeliveryStatus.Failed -> MaterialTheme.colorScheme.error
+                            DeliveryStatus.Read -> Color(0xFF2196F3) // Blue for read
                             else -> Color.Gray
                         },
                     )

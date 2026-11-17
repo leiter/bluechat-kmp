@@ -9,6 +9,7 @@ import com.bluechat.domain.model.PeerMessage
 import com.bluechat.domain.repository.AppPreferences
 import com.bluechat.domain.repository.BleController
 import com.juul.kable.Advertisement
+import com.juul.kable.ExperimentalApi
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
 import com.juul.kable.State
@@ -27,13 +28,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
 class KableCentralController(
@@ -65,6 +66,12 @@ class KableCentralController(
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
 
+    private val _reconnectAttempt = MutableStateFlow(0)
+    override val reconnectAttempt: StateFlow<Int> = _reconnectAttempt.asStateFlow()
+
+    private val _rssi = MutableStateFlow<Int?>(null)
+    override val rssi: StateFlow<Int?> = _rssi.asStateFlow()
+
     /** The peripheral we are connected to, paired with its identifier. */
     private val _connection = MutableStateFlow<Pair<String, Peripheral>?>(null)
 
@@ -72,6 +79,14 @@ class KableCentralController(
     override val connectedDeviceId: StateFlow<String?> = _connectedDeviceId.asStateFlow()
 
     private var scanJob: Job? = null
+    private var stateObserverJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var rssiPollingJob: Job? = null
+
+    private var autoReconnectEnabled = true
+    private var intentionalDisconnect = false
+    private var currentDeviceId: String? = null
+
     private val advertisementCache = mutableMapOf<String, Advertisement>()
 
     private val scanner = Scanner {
@@ -86,6 +101,9 @@ class KableCentralController(
      * Follows whichever peripheral is currently connected. Collecting this before a connection
      * exists is safe: it simply produces nothing until one exists, then switches over. The
      * previous `get()`-based version captured a null peripheral once and stayed empty forever.
+     *
+     * Because it keys off [_connection], an auto-reconnect that swaps in a new peripheral also
+     * re-subscribes here -- which is why the reconnect path must publish to [_connection].
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     override val incomingMessages: Flow<PeerMessage> =
@@ -158,18 +176,14 @@ class KableCentralController(
         _lastError.value = null
         _connectionState.value = ConnectionState.Connecting
 
+        intentionalDisconnect = false
+        currentDeviceId = deviceId
+        _reconnectAttempt.value = 0
+
         val p = Peripheral(advertisement)
         _connection.value = deviceId to p
         _connectedDeviceId.value = deviceId
-
-        p.state.onEach { state ->
-            _connectionState.value = when (state) {
-                is State.Connecting -> ConnectionState.Connecting
-                is State.Connected -> ConnectionState.Connected
-                is State.Disconnecting -> ConnectionState.Disconnecting
-                is State.Disconnected -> ConnectionState.Disconnected
-            }
-        }.launchIn(scope)
+        observePeripheralState(p)
 
         val maxAttempts = 3
         val backoffDelays = longArrayOf(1000L, 2000L, 4000L)
@@ -191,8 +205,121 @@ class KableCentralController(
         _connectionState.value = ConnectionState.Disconnected
         _connection.value = null
         _connectedDeviceId.value = null
+        currentDeviceId = null
         _lastError.value = describeConnectFailure(lastException)
         throw lastException!!
+    }
+
+    /**
+     * Mirrors kable's connection state, and turns an *unexpected* drop into a reconnect.
+     * A disconnect the user asked for is not retried, which is what [intentionalDisconnect]
+     * distinguishes.
+     */
+    private fun observePeripheralState(p: Peripheral) {
+        stateObserverJob?.cancel()
+        stateObserverJob = p.state.onEach { state ->
+            when (state) {
+                is State.Connecting -> _connectionState.value = ConnectionState.Connecting
+
+                is State.Connected -> {
+                    _connectionState.value = ConnectionState.Connected
+                    _reconnectAttempt.value = 0
+                    startRssiPolling()
+                }
+
+                is State.Disconnecting -> {
+                    _connectionState.value = ConnectionState.Disconnecting
+                    stopRssiPolling()
+                }
+
+                is State.Disconnected -> {
+                    stopRssiPolling()
+                    _rssi.value = null
+                    if (!intentionalDisconnect && autoReconnectEnabled && currentDeviceId != null) {
+                        startAutoReconnect()
+                    } else {
+                        _connectionState.value = ConnectionState.Disconnected
+                    }
+                }
+            }
+        }.launchIn(scope)
+    }
+
+    @OptIn(ExperimentalApi::class)
+    private fun startRssiPolling() {
+        rssiPollingJob?.cancel()
+        rssiPollingJob = scope.launch {
+            while (true) {
+                runCatching {
+                    val p = _connection.value?.second
+                    if (p != null && _connectionState.value == ConnectionState.Connected) {
+                        _rssi.value = p.rssi()
+                    }
+                }
+                delay(RSSI_POLL_INTERVAL_MILLIS)
+            }
+        }
+    }
+
+    private fun stopRssiPolling() {
+        rssiPollingJob?.cancel()
+        rssiPollingJob = null
+    }
+
+    /**
+     * Walks an exponential backoff trying to get the same peer back.
+     *
+     * Note this re-runs [onConnected] on success. A reconnect produces a *new* GATT connection
+     * with the MTU back at the 23-byte default and a peer that has forgotten who we are, so
+     * skipping that would silently drop every later message back to 20-byte frames.
+     */
+    private fun startAutoReconnect() {
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            for (attempt in 0 until MAX_RECONNECT_ATTEMPTS) {
+                _reconnectAttempt.value = attempt + 1
+                _connectionState.value = ConnectionState.Reconnecting
+
+                val deviceId = currentDeviceId ?: break
+
+                if (advertisementCache[deviceId] == null) {
+                    // Lost the advertisement; go looking for it again.
+                    startScan()
+                    delay(RECONNECT_SCAN_MILLIS)
+                    stopScan()
+                }
+
+                val ad = advertisementCache[deviceId]
+                if (ad != null) {
+                    val reconnected = runCatching {
+                        val p = Peripheral(ad)
+                        // Publish before connecting so incomingMessages re-subscribes to the
+                        // new peripheral rather than the dead one.
+                        _connection.value = deviceId to p
+                        observePeripheralState(p)
+                        p.connect()
+                        onConnected(p)
+                        true
+                    }.getOrDefault(false)
+
+                    if (reconnected) {
+                        _reconnectAttempt.value = 0
+                        return@launch
+                    }
+                }
+
+                if (attempt < MAX_RECONNECT_ATTEMPTS - 1) {
+                    delay(RECONNECT_BACKOFF_MILLIS[attempt])
+                }
+            }
+
+            _connectionState.value = ConnectionState.Disconnected
+            _reconnectAttempt.value = 0
+            _lastError.value = "Lost the connection and could not get it back."
+            _connection.value = null
+            _connectedDeviceId.value = null
+            currentDeviceId = null
+        }
     }
 
     /**
@@ -213,12 +340,31 @@ class KableCentralController(
     }
 
     override suspend fun disconnect() {
+        intentionalDisconnect = true
+        reconnectJob?.cancel()
+        _reconnectAttempt.value = 0
+        stopRssiPolling()
+        _rssi.value = null
+
         val deviceId = _connection.value?.first
         _connection.value?.second?.disconnect()
         _connection.value = null
         _connectedDeviceId.value = null
+        currentDeviceId = null
         deviceId?.let(codec::forget)
         maxFrameSize = DEFAULT_MAX_FRAME_SIZE
+    }
+
+    override fun disconnectIntentionally() {
+        scope.launch { runCatching { disconnect() } }
+    }
+
+    override fun enableAutoReconnect(enabled: Boolean) {
+        autoReconnectEnabled = enabled
+        if (!enabled) {
+            reconnectJob?.cancel()
+            _reconnectAttempt.value = 0
+        }
     }
 
     /**
@@ -255,7 +401,33 @@ class KableCentralController(
         )
     }
 
-    /** Writes an envelope as one or more frames, each within the negotiated MTU. */
+    override suspend fun sendReadReceipt(messageId: String) {
+        val p = _connection.value?.second ?: return
+        runCatching {
+            writeEnvelope(
+                p,
+                Envelope.ReadReceipt(senderId = appPreferences.localPeerId, messageId = messageId),
+            )
+        }
+    }
+
+    override suspend fun sendTypingIndicator(isTyping: Boolean) {
+        val p = _connection.value?.second ?: return
+        // Best effort by design: a dropped typing signal is not worth surfacing to the user.
+        runCatching {
+            writeEnvelope(
+                p,
+                Envelope.Typing(senderId = appPreferences.localPeerId, isTyping = isTyping),
+            )
+        }
+    }
+
+    /**
+     * Writes an envelope as one or more frames, each within the negotiated MTU.
+     *
+     * [WriteType.WithResponse] is required, not a preference: the characteristic only declares
+     * PROPERTY_WRITE, so kable's default of WithoutResponse makes every send fail.
+     */
     private suspend fun writeEnvelope(peripheral: Peripheral, envelope: Envelope) {
         codec.encode(envelope, maxFrameSize).forEach { frame ->
             peripheral.write(messageCharacteristic, frame, WriteType.WithResponse)
@@ -264,11 +436,18 @@ class KableCentralController(
 
     override fun release() {
         stopScan()
+        stopRssiPolling()
+        reconnectJob?.cancel()
+        stateObserverJob?.cancel()
         scope.cancel()
     }
 
     private companion object {
         /** ATT default MTU of 23 minus the 3-byte ATT header. */
         const val DEFAULT_MAX_FRAME_SIZE = 20
+        const val MAX_RECONNECT_ATTEMPTS = 5
+        const val RSSI_POLL_INTERVAL_MILLIS = 2000L
+        const val RECONNECT_SCAN_MILLIS = 2000L
+        val RECONNECT_BACKOFF_MILLIS = longArrayOf(1000L, 2000L, 4000L, 8000L, 16000L)
     }
 }

@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
@@ -35,6 +35,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.bluechat.domain.model.ConnectionState
 import com.bluechat.presentation.components.ChatBubble
+import com.bluechat.presentation.components.DateSeparator
+import com.bluechat.presentation.components.ReconnectingBanner
+import com.bluechat.presentation.components.SignalStrengthIndicator
+import com.bluechat.presentation.components.TypingIndicator
+import com.bluechat.util.SignalStrength
+import com.bluechat.util.isSameDay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,6 +48,7 @@ fun ChatScreen(
     state: ChatUiState,
     onSendMessage: (String) -> Unit,
     onDisconnect: () -> Unit,
+    onTextChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var messageText by rememberSaveable { mutableStateOf("") }
@@ -65,11 +72,16 @@ fun ChatScreen(
                                 ConnectionState.Connected -> Color(0xFF4CAF50)
                                 ConnectionState.Connecting -> Color(0xFFFFC107)
                                 ConnectionState.Disconnecting -> Color(0xFFFFC107)
+                                ConnectionState.Reconnecting -> Color(0xFFFFC107)
                                 ConnectionState.Disconnected -> Color(0xFFF44336)
                             },
                         ) {}
                         Spacer(Modifier.width(8.dp))
                         Text("Messages")
+                        if (state.connectionState == ConnectionState.Connected && state.signalStrength != SignalStrength.None) {
+                            Spacer(Modifier.width(8.dp))
+                            SignalStrengthIndicator(signalStrength = state.signalStrength)
+                        }
                     }
                 },
                 navigationIcon = {
@@ -89,6 +101,13 @@ fun ChatScreen(
                 // pushed the top bar and the whole message list off-screen.
                 .imePadding(),
         ) {
+            if (state.connectionState == ConnectionState.Reconnecting && state.reconnectAttempt > 0) {
+                ReconnectingBanner(
+                    attempt = state.reconnectAttempt,
+                    maxAttempts = 5,
+                )
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .weight(1f)
@@ -97,13 +116,28 @@ fun ChatScreen(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                items(state.messages) { message ->
+                itemsIndexed(state.messages) { index, message ->
+                    val showDateSeparator = index == 0 || !isSameDay(
+                        state.messages[index - 1].timestamp,
+                        message.timestamp
+                    )
+                    if (showDateSeparator && message.timestamp > 0) {
+                        DateSeparator(epochMillis = message.timestamp)
+                    }
                     ChatBubble(
                         message = message,
                         modifier = Modifier.align(
                             if (message.isFromLocalUser) Alignment.End else Alignment.Start
                         ),
                     )
+                }
+
+                if (state.isRemoteTyping) {
+                    item {
+                        TypingIndicator(
+                            modifier = Modifier.align(Alignment.Start),
+                        )
+                    }
                 }
             }
 
@@ -124,7 +158,10 @@ fun ChatScreen(
             ) {
                 TextField(
                     value = messageText,
-                    onValueChange = { messageText = it },
+                    onValueChange = {
+                        messageText = it
+                        onTextChanged(it)
+                    },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message") },
                 )
