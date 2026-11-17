@@ -90,7 +90,7 @@ A3 gates most of Phase D.
 
 | # | Task | Notes |
 |---|------|-------|
-| B1 | `Contact` entity + Room table | `contactId` (stable id from A1), local `displayName` override, `lastSeen`, `isBlocked`, `isFavourite`, avatar seed. Needs a v2→v3 migration. |
+| B1 | `Contact` entity + Room table | `contactId` (stable id from A1), local `displayName` override, `lastSeen`, `isBlocked`, `isFavourite`, avatar seed. No migration — version bump and wipe. |
 | B2 | Add-contact flow | From a discovered device; auto-create on first successful exchange. |
 | B3 | Contacts screen | List, search, rename, delete, block. |
 | B4 | Profile exchange | Send own display name on connect; store as the peer's *claimed* name, with the local nickname taking precedence. |
@@ -99,7 +99,8 @@ A3 gates most of Phase D.
 Phase 9 (merged) delivered a `favorite_devices` table with a star control and a Favourites
 section on the device list. That is not B1: it keys on the **transport address**, not the
 stable peer id from A1, so a favourite does not survive address randomisation. B1 should
-absorb it rather than sit alongside it.
+absorb it rather than sit alongside it. No migration is written for that: the version is
+bumped and the database is recreated empty (see the schema policy decision below).
 
 B4 also removes the current need to hijack the **system-wide Bluetooth adapter name** as the
 identity broadcast — see defect #7 in the test findings.
@@ -178,7 +179,11 @@ This is what makes the app *feel* like a chat app rather than a demo.
 - **F2. iOS parity.** Run the same two-device matrix cross-platform, add Info.plist usage
   strings, enable BLE background modes.
 - **F3. Tests.** There are none. Fakes for `BleController` and `BlePeripheralServer`, ViewModel
-  tests with Turbine, and a Room migration test — the v1→v2 migration has never been exercised.
+  tests with Turbine, and **seeded database fixtures** — tests that wipe, fill the tables with
+  the preconditions under test, and assert against them. This replaces the Room migration test
+  that used to sit here, which is void now that there is no migration chain to exercise. What
+  remains is a release gate, not a test: a genuine chain must be built before the first install
+  outside the two test phones.
 
 ---
 
@@ -188,6 +193,24 @@ This is what makes the app *feel* like a chat app rather than a demo.
 2. ~~**E1 (foreground service).**~~ Done.
 3. **B + C.** The visible chat-app shape, built on a foundation that will not need redoing.
    This is now the next piece of work.
+
+---
+
+## Deferred — consciously skipped, not forgotten
+
+Tracked in claude-mem work state as `deferred-debts`, so it resurfaces at session start.
+
+| Item | Why it is parked | What would un-park it |
+|------|------------------|-----------------------|
+| **A real migration chain** | Pre-release; two installs, both wiped routinely. | **Release gate.** Any install outside the two test phones. |
+| **C4 pagination** | A whole-history `Flow<List<…>>` into a `LazyColumn` is fine at 30 messages. | Histories in the hundreds, or a visible scroll stutter. |
+| **Defects #12, #14** | Both live in the scanner/device-list path that C2 replaces. | Verify after C2 — do not assume the replacement removed them. |
+| **`DeliveryStatus.Delivered`** | Never set; the status jumps `Sent` → `Read`. | Needs a transport-level ack distinct from the read receipt. |
+| **Server-side read receipts** | Acknowledgement is client-to-server only. | E3 was decided *against*, so the asymmetry is permanent and this is a real gap. |
+| **Typing indicator on server screens** | Wired client-side only. | Cheap; fold into B/C when touching those screens. |
+| **D3 message grouping, D2 tap-to-retry** | Separators and relative times shipped; these did not. | Polish pass after C. |
+
+---
 
 ## Decisions
 
@@ -244,3 +267,22 @@ the peer directory moved to 5->6; the database is now version 6 with all four ta
 `write()` calls still use kable's `WithoutResponse` default, its `ChatViewModel` still
 collects inbound messages per-screen, and its `DeviceViewModel.onCleared()` still calls
 `release()` on an application-scoped singleton. The merged code keeps the fixed forms.
+
+### Schema changes: wipe, never migrate (decided 2026-11-17)
+
+The five hand-written `Migration` objects (v1 through v6) were **deleted**, and
+`createDatabase` now registers `fallbackToDestructiveMigration(dropAllTables = true)` plus the
+same on downgrade. From here a schema change is a version bump and nothing else: Room drops
+every table and recreates the database empty, and tests seed the preconditions they need.
+
+Why, on the user's instruction: the project is pre-release and the only two installs are the
+test phones, which are `pm clear`ed routinely. The chain protected nobody. It was also already
+partly fiction — Room had never exported schemas `3.json` or `4.json`, so two of its six links
+had never been validated — and it had already cost real work, since Phase A and Phase 9 each
+independently claimed version 3 and the collision had to be untangled during the merge.
+
+The stale snapshots (`1.json`, `2.json`, `5.json`) were removed; `6.json` remains as the record
+of the current schema. Export stays on.
+
+The cost is recorded in **Deferred** above as a release gate, and it is a hard one: with no
+chain, the first external install cannot ever be upgraded in place.
