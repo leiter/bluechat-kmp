@@ -23,4 +23,13 @@ interface ConversationRepository {
     suspend fun setMuted(conversationId: String, muted: Boolean)
 
     suspend fun setArchived(conversationId: String, archived: Boolean)
+
+    /**
+     * Deletes a conversation: its messages, anything still queued to send, and its flags.
+     *
+     * The contact is left alone. Because the chat list is derived from the messages, this also
+     * removes the conversation from the list -- there is no separate "clear history" that
+     * leaves an empty conversation behind, since an empty conversation does not exist.
+     */
+    suspend fun delete(conversationId: String)
 }

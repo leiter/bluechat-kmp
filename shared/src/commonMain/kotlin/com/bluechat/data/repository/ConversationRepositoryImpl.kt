@@ -33,6 +33,10 @@ class ConversationRepositoryImpl(
     override suspend fun setArchived(conversationId: String, archived: Boolean) {
         dao.setArchived(conversationId, archived)
     }
+
+    override suspend fun delete(conversationId: String) {
+        dao.deleteConversation(conversationId)
+    }
 }
 
 private fun ConversationSummaryRow.toDomain(): Conversation {

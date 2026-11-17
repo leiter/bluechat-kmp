@@ -150,7 +150,7 @@ Two consequences worth recording:
 | C2 | **Chat list becomes the home screen** | **DONE (2026-11-18).** `startDestination` is `"conversations"`; the scanner is now a "New chat" picker. |
 | C3 | Unread tracking | **PARTLY DONE (2026-11-18).** Badge counts and per-row unread ship with C1; both chat screens now mark read on open. Still missing: server-side read *receipts*, so the peer is not told. |
 | C4 | Pagination | `ChatMessageDao` returns the entire history as one `Flow<List<…>>` into a `LazyColumn`. Fine at 3 messages, not at 3,000. Room `PagingSource` + Paging 3. |
-| C5 | Delete conversation / clear history | `deleteMessagesForDevice` already exists and is unused. |
+| C5 | Delete conversation / clear history | **DONE (2026-11-18).** Long-press a chat → Delete. One transaction over messages, outbox and flags. |
 
 ---
 
@@ -244,6 +244,7 @@ Tracked in claude-mem work state as `deferred-debts`, so it resurfaces at sessio
 |------|------------------|-----------------------|
 | **Database durability: migrations, schemas, snapshots** | Not a concern while the only installs are the two test phones. | **F0 — release preparation.** See below; deliberately not touched before then. |
 | **C4 pagination** | A whole-history `Flow<List<…>>` into a `LazyColumn` is fine at 30 messages. | Histories in the hundreds, or a visible scroll stutter. |
+| **Seeded database fixtures** | Parked indefinitely (user, 2026-11-18). Every test builds its world from fakes; no test opens a real Room database. | No date. Revisit only if something a fixture would have caught actually bites — the `ConversationDao` summary join is the exposed surface. |
 | **Defect #12** | Scan list never cleared between scans; lives in the picker. | Still open after C2. |
 | **`DeliveryStatus.Delivered`** | Never set; the status jumps `Sent` → `Read`. | Needs a transport-level ack distinct from the read receipt. |
 | **Server-side read receipts** | Acknowledgement is client-to-server only. | E3 was decided *against*, so the asymmetry is permanent and this is a real gap. |
@@ -406,3 +407,28 @@ This also forced **defect #14** to be fixed rather than deferred. The `broadcast
 both roles, which was a harmless duplicate row while a client had no group screen to show it --
 but the chat list would have surfaced it as a phantom "Group Chat" conversation on a device with
 no group. Inbound messages now carry their role, and only the server mirrors.
+
+### C5 — there is no "clear history" separate from "delete chat" (2026-11-18)
+
+The roadmap listed these as one item, and building it showed they are the same operation.
+
+Because C1 made the chat list **derived from the messages**, a conversation with no messages
+does not appear at all. Clearing a conversation's history therefore removes it from the list;
+there is no empty-but-present conversation to leave behind. So the app offers one action,
+Delete, rather than two that differ only in a distinction the data model cannot express.
+
+What it removes, in a single transaction: the messages, anything still queued in the outbox for
+that conversation, and the conversation's own flags row. The outbox matters -- deleting the
+messages but not the queue would leave a conversation that has vanished from the UI while still
+trying to transmit.
+
+The **contact is kept**, mirroring B3's contact delete, which keeps the messages. Each action
+removes only what the user pointed at, and the confirmation dialog says which is which.
+
+That pairing also closes a dead end B3 created: deleting a contact leaves its conversation
+behind, titled by a raw peer id. Until C5 there was no way to remove it.
+
+One wording bug worth recording, caught on device: the dialog reassured the user that the
+contact "stays in your contacts" unconditionally -- including for exactly the orphaned
+conversation whose contact had already been deleted, which is the case where the title is a raw
+id. It now checks `isKnownContact` and says the peer is not in contacts instead.

@@ -187,6 +187,44 @@ class ConversationsViewModelTest {
         }
     }
 
+    @Test
+    fun `deleting a conversation removes it from the list`() = runTest {
+        repository.set(conversation("a"), conversation("b"))
+        val viewModel = createViewModel()
+
+        viewModel.delete("a")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            testDispatcher.scheduler.advanceUntilIdle()
+            val state = expectMostRecentItem()
+            assertEquals(listOf("b"), state.visibleConversations.map { it.conversationId })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `deleting an archived conversation also removes it from the archive`() = runTest {
+        // The archive is the same list filtered, so a delete has to clear it from both views
+        // rather than only the one the user was looking at.
+        repository.set(conversation("a", isArchived = true))
+        val viewModel = createViewModel()
+        viewModel.toggleShowArchived()
+
+        viewModel.delete("a")
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem()
+            testDispatcher.scheduler.advanceUntilIdle()
+            val state = expectMostRecentItem()
+            assertTrue(state.visibleConversations.isEmpty())
+            assertEquals(0, state.archivedCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     private fun conversation(
         id: String,
         lastMessageAt: Long = 0L,
@@ -238,6 +276,10 @@ class FakeConversationRepository : ConversationRepository {
 
     override suspend fun setArchived(conversationId: String, archived: Boolean) {
         update(conversationId) { it.copy(isArchived = archived) }
+    }
+
+    override suspend fun delete(conversationId: String) {
+        _conversations.value = _conversations.value.filterNot { it.conversationId == conversationId }
     }
 
     private fun update(id: String, transform: (Conversation) -> Conversation) {

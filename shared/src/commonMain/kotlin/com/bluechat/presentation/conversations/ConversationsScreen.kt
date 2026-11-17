@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -56,12 +58,15 @@ fun ConversationsScreen(
     onTogglePinned: (String, Boolean) -> Unit,
     onToggleMuted: (String, Boolean) -> Unit,
     onSetArchived: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
     onToggleShowArchived: () -> Unit,
     onContacts: () -> Unit,
     onServerMode: () -> Unit,
     onSettingsClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var deleting by remember { mutableStateOf<Conversation?>(null) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -115,12 +120,51 @@ fun ConversationsScreen(
                             onSetArchived = {
                                 onSetArchived(conversation.conversationId, !conversation.isArchived)
                             },
+                            onDelete = { deleting = conversation },
                         )
                         HorizontalDivider()
                     }
                 }
             }
         }
+    }
+
+    deleting?.let { conversation ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete chat with ${conversation.title}?") },
+            text = {
+                Text(
+                    // Say exactly what goes and what stays. "Delete chat" is ambiguous about
+                    // the contact, and the messages are unrecoverable -- there is no copy on a
+                    // server to restore from.
+                    //
+                    // The reassurance is conditional on there actually being a contact. A
+                    // conversation can outlive its contact (deleting a contact keeps the
+                    // history), and promising that a contact "stays" when none exists is just
+                    // a lie -- it is exactly the case where the title is a raw id.
+                    when {
+                        conversation.isGroup ->
+                            "All messages in this chat are deleted permanently."
+                        conversation.isKnownContact ->
+                            "All messages are deleted permanently. " +
+                                "${conversation.title} stays in your contacts."
+                        else ->
+                            "All messages are deleted permanently. This peer is not in your " +
+                                "contacts."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(conversation.conversationId)
+                    deleting = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleting = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -132,6 +176,7 @@ private fun ConversationRow(
     onTogglePinned: () -> Unit,
     onToggleMuted: () -> Unit,
     onSetArchived: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -204,6 +249,10 @@ private fun ConversationRow(
             DropdownMenuItem(
                 text = { Text(if (conversation.isArchived) "Unarchive" else "Archive") },
                 onClick = { menuOpen = false; onSetArchived() },
+            )
+            DropdownMenuItem(
+                text = { Text("Delete") },
+                onClick = { menuOpen = false; onDelete() },
             )
         }
     }

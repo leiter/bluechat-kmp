@@ -47,4 +47,9 @@ class ConversationsViewModel(
     fun setArchived(conversationId: String, archived: Boolean) {
         viewModelScope.launch { conversationRepository.setArchived(conversationId, archived) }
     }
+
+    /** Deletes the conversation and its history. The contact, if any, is kept. */
+    fun delete(conversationId: String) {
+        viewModelScope.launch { conversationRepository.delete(conversationId) }
+    }
 }

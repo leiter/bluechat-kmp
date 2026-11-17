@@ -2,6 +2,7 @@ package com.bluechat.data.db
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -107,5 +108,29 @@ interface ConversationDao {
     suspend fun find(conversationId: String): ConversationEntity?
 
     @Query("DELETE FROM conversations WHERE conversationId = :conversationId")
-    suspend fun delete(conversationId: String)
+    suspend fun deleteFlags(conversationId: String)
+
+    @Query("DELETE FROM chat_messages WHERE deviceId = :conversationId")
+    suspend fun deleteMessages(conversationId: String)
+
+    @Query("DELETE FROM pending_messages WHERE deviceId = :conversationId")
+    suspend fun deletePending(conversationId: String)
+
+    /**
+     * Removes a conversation completely: its messages, anything still queued to send, and its
+     * flags.
+     *
+     * One transaction, because a half-deleted conversation is worse than either outcome -- the
+     * list is derived from the messages, so deleting those but not the outbox would leave a
+     * conversation that has vanished from the UI while still trying to transmit.
+     *
+     * The *contact* is deliberately untouched, mirroring B3's delete, which keeps the messages.
+     * Each one removes only what the user pointed at.
+     */
+    @Transaction
+    suspend fun deleteConversation(conversationId: String) {
+        deleteMessages(conversationId)
+        deletePending(conversationId)
+        deleteFlags(conversationId)
+    }
 }

@@ -76,6 +76,7 @@ fun App() {
                     onTogglePinned = viewModel::togglePinned,
                     onToggleMuted = viewModel::toggleMuted,
                     onSetArchived = viewModel::setArchived,
+                    onDelete = viewModel::delete,
                     onToggleShowArchived = viewModel::toggleShowArchived,
                     onContacts = { navController.navigate("contacts") },
                     onServerMode = { navController.navigate("server") },
