@@ -13,12 +13,13 @@ protocol, GATT, schema). Its Part 2 is history.
 ./gradlew :shared:compileKotlinIosSimulatorArm64    # run this after touching commonMain or iosMain
 ```
 
-- `../kable` must exist, checked out at commit **`dbb7599`** (`0.42.0` plus two commits). It is a composite build, not a
-  Maven dependency. Kable 0.43+ needs Gradle 9.6+ and AGP 9 and do not build here.
-  Do not bump kable without bumping this project's toolchain too.
-- kable needs a **JDK 17** toolchain. It is provided by the foojay resolver plugin, added
-  as an uncommitted local edit to `../kable/settings.gradle.kts` (see README). If the build
-  says "Cannot find a Java installation ... 17", that edit is missing.
+- `../kable` must exist, on local branch **`bluechat-pin`**: upstream commit `dbb7599`
+  (`0.42.0` plus two commits) plus one local commit that adds the foojay resolver. It is a
+  composite build, not a Maven dependency. Kable 0.43+ needs Gradle 9.5+ and Kotlin 2.3+
+  (0.44+ also AGP 9), so it does not build here. Do not bump kable without bumping this
+  project's toolchain too, and do not switch kable off `bluechat-pin`.
+- kable needs a **JDK 17** toolchain, which Gradle downloads through that foojay commit.
+  If the build says "Cannot find a Java installation ... 17", kable is not on `bluechat-pin`.
 - A full clean build (Android + tests + iOS compile) takes about 11 minutes on this machine,
   so run it in the background.
 - BLE behaviour can only be verified on two physical devices. Compiling and passing unit
@@ -86,6 +87,14 @@ bound in `AndroidModule` / `IosModule`. Use `expect/actual` only for small state
 (`MtuNegotiation`, `TimeFormatter`).
 
 ## Traps
+
+- **Kotlin functions starting with `init` are renamed for Swift.** Kotlin/Native exports
+  `initKoin()` as `doInitKoin()`, because Objective-C reserves the `init` prefix. Check the
+  generated `ComposeApp.h` when Swift can't find a Kotlin symbol.
+- **Don't hard-code `JAVA_HOME` in the Xcode build phase.** It used to point at a Homebrew
+  path from another machine. The phase now falls back to Android Studio's JBR.
+- **Verify iOS changes with `xcodebuild`.** `compileKotlinIosSimulatorArm64` doesn't compile
+  the Swift side or link the framework, so it missed both issues above.
 
 - **Never rename the phone's Bluetooth adapter.** The display name goes over the wire in
   `Envelope.Profile`. The advertisement carries only the service UUID, because a 128-bit UUID

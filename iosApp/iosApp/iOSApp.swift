@@ -4,7 +4,9 @@ import ComposeApp
 @main
 struct iOSApp: App {
     init() {
-        KoinInitKt.initKoin()
+        // Kotlin/Native exports `initKoin()` as `doInitKoin()`: Objective-C reserves the
+        // `init` prefix for initializers.
+        KoinInitKt.doInitKoin()
     }
 
     var body: some Scene {

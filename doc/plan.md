@@ -253,12 +253,12 @@ includeBuild("../kable")          // Gradle substitutes com.juul.kable:* automat
 implementation(libs.kable.core)   // no version, resolved from the composite build
 ```
 
-`../kable` must be upstream [JuulLabs/kable](https://github.com/JuulLabs/kable) at tag
+`../kable` must be upstream [JuulLabs/kable](https://github.com/JuulLabs/kable) at
 commit `dbb7599` (`0.42.0` plus two maintenance commits). 0.43+ needs Gradle 9.5+
 and Kotlin 2.3+, and 0.44+ also needs AGP 9. The project uses
 `AndroidPeripheral.requestMtu` and `maximumWriteValueLengthForType`, which are both present
-there. A local edit to kable's `settings.gradle.kts` adds the foojay toolchain resolver so
-Gradle can download JDK 17. The README has the snippet.
+there. One local commit on top, on branch `bluechat-pin`, adds the foojay toolchain resolver
+to kable's `settings.gradle.kts` so Gradle can download JDK 17. The README has the snippet.
 
 ## Verification
 

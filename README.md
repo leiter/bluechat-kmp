@@ -19,7 +19,8 @@ session alive in the background.
 
 | Area | Android | iOS |
 |---|---|---|
-| Central role (scan, connect, chat) | Verified on two phones | Compiles, not verified on a device |
+| App builds and launches | Yes | Yes, in the simulator (2026-11-18). Not run on a device |
+| Central role (scan, connect, chat) | Verified on two phones | Not verified on a device (the simulator has no Bluetooth) |
 | Peripheral role (GATT server) | Verified on two phones | `CBPeripheralManager` implementation, not verified on a device |
 | Background operation | Foreground service (E1) | Not yet (BLE background modes are task F2) |
 
@@ -65,9 +66,16 @@ plugins {
 }
 ```
 
-This is an uncommitted local edit on a detached `HEAD`. It survives as long as you don't
-switch kable's checkout. Alternatively, install any JDK 17 (e.g. Temurin via IntelliJ →
-*Download JDK*), and Gradle will detect it without the edit.
+Commit it on a local branch so a later checkout can't lose it. On the main dev machine this is
+branch **`bluechat-pin`** in `../kable` (`dbb7599` + one commit with the snippet):
+
+```bash
+git switch -c bluechat-pin
+git commit -am "Add foojay toolchain resolver for bluechat-kmp"
+```
+
+Alternatively, install any JDK 17 (e.g. Temurin via IntelliJ → *Download JDK*), and Gradle
+will detect it without the edit.
 
 ## Build and run
 
@@ -78,8 +86,19 @@ switch kable's checkout. Alternatively, install any JDK 17 (e.g. Temurin via Int
 ./gradlew :shared:compileKotlinIosSimulatorArm64    # check that the iOS code compiles
 ```
 
-**iOS:** open `iosApp/iosApp.xcodeproj` in Xcode and run it. A build phase calls
-`./gradlew :composeApp:embedAndSignAppleFrameworkForXcode`, which builds the framework.
+**iOS:** open `iosApp/iosApp.xcodeproj` in Xcode and run it on a simulator. A build phase
+calls `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode`, which builds the
+framework. The phase finds a JDK by itself (a valid `JAVA_HOME`, else Android Studio's
+bundled JBR), because Xcode does not load your shell profile. The first build takes several
+minutes. To run on a physical iPhone, set a Development Team in the target's *Signing &
+Capabilities* first. The project ships with none.
+
+From the command line:
+
+```bash
+xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug \
+  -destination 'platform=iOS Simulator,name=iPhone 17' build
+```
 
 **Testing BLE** needs two physical devices, because emulators and simulators have no
 Bluetooth. Start **Server Mode** on one phone, then use **New chat** on the other to scan and
