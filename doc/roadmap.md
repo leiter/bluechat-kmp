@@ -1,7 +1,12 @@
 # Bluechat-KMP — Roadmap to a Standard Chat Application
 
-**Date:** 2026-11-17
-**Branch:** `dev` (at `8f85e6a`)
+**Started:** 2026-11-17 on `dev` (at `8f85e6a`) · **Last updated:** 2026-11-18, `main`
+(`dev` was merged into `main` on 2026-11-18)
+
+**Done so far:** Phase A, E1, the Phase 9 merge (D1–D4 mostly, E2, part of E5), B1, B3, B4,
+C1, C2, C5, part of C3. **Next:** B2, B5, the rest of C3, then E4.
+For the architecture as it stands, see [`plan.md`](plan.md), Part 1.
+
 **Starting point:** BLE messaging works end to end on Android — discovery, connect, both
 directions, group broadcast, notifications and persistence (see
 [`device-test-findings.md`](device-test-findings.md)). What exists is a working BLE transport
@@ -218,12 +223,16 @@ This is what makes the app *feel* like a chat app rather than a demo.
   conversations.
 - **F2. iOS parity.** Run the same two-device matrix cross-platform, add Info.plist usage
   strings, enable BLE background modes.
-- **F3. Tests.** There are none. Fakes for `BleController` and `BlePeripheralServer`, ViewModel
-  tests with Turbine, and **seeded database fixtures** — tests that wipe, fill the tables with
-  the preconditions under test, and assert against them. This replaces the Room migration test
-  that used to sit here, which is void now that there is no migration chain to exercise. What
-  remains is a release gate, not a test: a genuine chain must be built before the first install
-  outside the two test phones.
+- **F3. Tests.** **PARTLY DONE (2026-11-18).** `shared/src/commonTest` has 67 tests in 7
+  files: the protocol (framing, reassembly, envelope codec), `ChatRepositoryImpl`, `Contact`,
+  and the Chat, Contacts, Conversations and Device ViewModels. They use hand-written fakes,
+  kotlinx-coroutines-test and Turbine, and run with `./gradlew :shared:testDebugUnitTest`.
+  Still missing: tests for the server-side ViewModels (`ServerViewModel`, `ServerChatViewModel`,
+  `BroadcastChatViewModel`) and `IncomingMessageCoordinator`, and anything that opens a real
+  Room database. **Seeded database fixtures** are parked (see Deferred). They replace the
+  Room migration test that used to sit here, which no longer applies now that there is no
+  migration chain. What remains is a release gate, not a test: a genuine chain must be built
+  before the first install outside the two test phones.
 
 ---
 
@@ -232,7 +241,12 @@ This is what makes the app *feel* like a chat app rather than a demo.
 1. ~~**A1 + A2 + A3 as a single piece of work.**~~ Done.
 2. ~~**E1 (foreground service).**~~ Done.
 3. **B + C.** The visible chat-app shape, built on a foundation that will not need redoing.
-   This is now the next piece of work.
+   Mostly done: B1, B3, B4, C1, C2 and C5 shipped on 2026-11-17/18. **Remaining:** B2
+   (add-contact flow), B5 (presence), C3 (server-side read receipts), and C4 (parked, see
+   Deferred).
+4. **E4 (notification fixes).** Still open. `MessageNotifier.android.kt` still uses
+   `notificationId++` with no `contentIntent`, so every message creates its own notification
+   and tapping one does nothing.
 
 ---
 
@@ -361,8 +375,8 @@ That last clause is the point of the whole exercise: the failure mode we are avo
 **2. Keep a populated database snapshot per schema version.** Two artefacts that are easy to
 confuse:
 
-- **Exported schema JSON** — Room already writes these to `shared/schemas/`. `1`, `2`, `5` and
-  `6` are present. `3` and `4` were never generated, so they would have to be reconstructed.
+- **Exported schema JSON** — Room already writes these to `shared/schemas/`. `1`, `2`, `5`,
+  `6`, `7` and `8` are present. `3` and `4` were never generated, so they would have to be reconstructed.
 - **A populated `.db` file per version**, committed as a fixture. This earns its keep twice
   over: migrating a real old database forward is the only honest test of a chain, and a
   ready-made database with messages, peers and contacts already in it spares every test from

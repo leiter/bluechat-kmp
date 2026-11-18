@@ -43,14 +43,15 @@ The BLE transport is [kable](https://github.com/JuulLabs/kable), included as a G
 Maven dependency. The project needs `AndroidPeripheral.requestMtu` and
 `maximumWriteValueLengthForType` for MTU negotiation.
 
-Use tag **`0.42.0`**. It matches this project's toolchain (Gradle 9.2.1, Kotlin 2.2.21).
+Use commit **`dbb7599`** (`dbb75996baf92fe4642f10b9a4518cf4ab572b96`, tag `0.42.0` plus two
+maintenance commits). It matches this project's toolchain (Gradle 9.2.1, Kotlin 2.2.21).
 Later tags need Gradle 9.6+ and AGP 9, and the build fails with
 *"Minimum supported Gradle version is 9.6.0"*.
 
 ```bash
 cd ..                       # the directory that contains bluechat-kmp
 git clone https://github.com/JuulLabs/kable.git
-cd kable && git checkout 0.42.0
+cd kable && git checkout dbb75996baf92fe4642f10b9a4518cf4ab572b96
 ```
 
 Then add Gradle's toolchain resolver to `../kable/settings.gradle.kts`, after the
@@ -88,7 +89,7 @@ connect.
 
 | Symptom | Cause / fix |
 |---|---|
-| `Minimum supported Gradle version is 9.6.0` | `../kable` is on a newer tag. Check out `0.42.0`. |
+| `Minimum supported Gradle version is 9.6.0` | `../kable` is on a newer commit. Check out `dbb7599`. |
 | `Cannot find a Java installation ... languageVersion=17` | The foojay snippet is missing from `../kable/settings.gradle.kts`. See the kable setup. |
 | Gradle cannot download dependencies (`No route to host`) but `curl` can | The JVM prefers IPv6. Add `systemProp.java.net.preferIPv4Stack=true` to `~/.gradle/gradle.properties`. |
 | Scan finds nothing on Android ≤ 11 | Location services must be switched on for BLE scanning below API 31. |
@@ -118,7 +119,7 @@ doc/          design and working notes
 |---|---|
 | [`doc/roadmap.md`](doc/roadmap.md) | **Start here for status.** Phases A–F with status per task, deferred items, dated decision log |
 | [`doc/device-test-findings.md`](doc/device-test-findings.md) | Two-phone test report: each defect with root cause, fix and re-verification, plus platform pitfalls |
-| [`doc/plan.md`](doc/plan.md) | Original build plan and Phases 1–8 history. Parts of it no longer match the code: the roadmap and the code take precedence |
+| [`doc/plan.md`](doc/plan.md) | Architecture reference (layers, routes, wire protocol, GATT profile, database, platform boundaries) plus the Phase 1–8 build history |
 | [`CLAUDE.md`](CLAUDE.md) | Working rules, architecture pointers and traps, written for AI coding assistants but useful to anyone |
 
 ## Tech stack

@@ -2,8 +2,8 @@
 
 BLE peer-to-peer chat app. Kotlin Multiplatform with Compose Multiplatform UI, for Android
 (primary) and iOS. Read `README.md` for setup. For status and decisions, `doc/roadmap.md`
-is the source of truth. `doc/plan.md` is historical and partly out of date, so do not
-trust its file tree, routes or "future" list.
+is the source of truth. `doc/plan.md` Part 1 is the architecture reference (routes, wire
+protocol, GATT, schema). Its Part 2 is history.
 
 ## Build and verify
 
@@ -13,8 +13,8 @@ trust its file tree, routes or "future" list.
 ./gradlew :shared:compileKotlinIosSimulatorArm64    # run this after touching commonMain or iosMain
 ```
 
-- `../kable` must exist, checked out at tag **`0.42.0`**. It is a composite build, not a
-  Maven dependency. Newer kable tags need Gradle 9.6+ and AGP 9 and do not build here.
+- `../kable` must exist, checked out at commit **`dbb7599`** (`0.42.0` plus two commits). It is a composite build, not a
+  Maven dependency. Kable 0.43+ needs Gradle 9.6+ and AGP 9 and do not build here.
   Do not bump kable without bumping this project's toolchain too.
 - kable needs a **JDK 17** toolchain. It is provided by the foojay resolver plugin, added
   as an uncommitted local edit to `../kable/settings.gradle.kts` (see README). If the build
@@ -103,7 +103,9 @@ bound in `AndroidModule` / `IosModule`. Use `expect/actual` only for small state
 
 ## Docs upkeep
 
-When a roadmap task is finished, update its status line in `doc/roadmap.md`, and add an
+When a roadmap task is finished, update its status line in `doc/roadmap.md` (and the
+"Done so far / Next" summary at the top). Update `doc/plan.md` Part 1 if routes, tables,
+wire format or platform boundaries changed, and add an
 entry to the Decisions log if a design choice was made. Record defects found on a device in
 `doc/device-test-findings.md` with the same structure as the existing entries: where, root
 cause, fix, re-verified.

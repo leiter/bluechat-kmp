@@ -1,427 +1,387 @@
-# Bluechat-KMP Project Plan
+# Bluechat-KMP — Architecture and Build History
+
+**Last updated:** 2026-11-18 (`main` at `e3a6e4f`)
+
+This document has two parts:
+
+1. **Architecture reference.** How the app is put together *today*: modules, layers, routes,
+   wire protocol, database and platform boundaries.
+2. **Build history (Phases 1–8).** How the first version was built, kept for the reasoning
+   behind early decisions. Where a later change replaced something, the history says so.
+
+For **status, open work and dated decisions**, [`roadmap.md`](roadmap.md) is the source of
+truth. Phase 9 and everything after it (phases A–F) is documented there. For defects found
+on devices, see [`device-test-findings.md`](device-test-findings.md). For setup, see the
+[`README`](../README.md).
+
+---
+
+# Part 1 — Architecture reference
 
 ## Overview
 
-Bluechat-KMP is a Kotlin Multiplatform BLE (Bluetooth Low Energy) chat application that enables peer-to-peer messaging between devices. It supports both **Central** (client) and **Peripheral** (server) roles, allowing devices to either scan for and connect to other devices, or advertise themselves and accept incoming connections.
+Bluechat-KMP is a peer-to-peer chat app over Bluetooth Low Energy, built with Kotlin
+Multiplatform and a shared Compose Multiplatform UI for Android and iOS.
 
-## Context
+The two BLE roles are **asymmetric by design** (decision E3 in the roadmap). One device
+goes into **Server Mode** (GATT peripheral, advertises and accepts several clients). Other
+devices **scan and connect** to it (GATT central, built on kable). The protocol layer above
+the transport doesn't depend on which role a device has.
 
-KMP project that replicates and extends the BluetoothLEChat BLE messaging features using the local kable fork as the BLE transport layer. The app targets Android + iOS with shared Compose Multiplatform UI, Room KMP for persistence, Koin for DI, and Jetpack Navigation Multiplatform.
+Features as of today:
 
-**Blueprint projects:**
-- `BluetoothLEChat` - BLE features (GATT profile, central/peripheral roles, scanning, advertising, chat over BLE)
-- `BluetoothChat` / `BlueChat` - Compose UI patterns (DeviceScreen, ChatScreen, ChatBubble, ViewModel+StateFlow)
-- `kable` (local fork) - KMP BLE library (Scanner, Peripheral, observe/write APIs)
+- **Conversation list** as the home screen. It is derived from the messages and has
+  pinned/muted/archived flags.
+- **Contacts** keyed on a stable per-install peer id. The name a peer announces and the
+  local nickname are kept separate, and contacts can be favourited or blocked.
+- **1:1 chat** in both roles, plus **group/broadcast chat** on the server.
+- **Framed wire protocol** with MTU negotiation (up to 517), so message length isn't
+  limited.
+- **Delivery and read receipts, typing indicator, an outbox with retry, and auto-reconnect**
+  with exponential backoff.
+- **Notifications**, plus an Android **foreground service** that keeps the session alive in
+  the background.
+- **Settings:** display name (sent to peers in the profile envelope) and theme
+  (System/Light/Dark).
 
-**Key features:**
-- **Central Mode**: Scan, connect, and chat with BLE peripherals
-- **Peripheral Mode**: Advertise as a GATT server and accept multiple client connections
-- **Message Persistence**: SQLite database stores chat history per device
-- **Delivery Status Tracking**: Messages show Sending/Sent/Failed states
-- **Broadcast Chat**: Send messages to all connected clients simultaneously
-- **Notifications**: Platform-specific message notifications
-- **Settings**: Customizable display name and theme preferences
-
-**Decisions:**
-- Kable integration: **Composite build** (`includeBuild("../kable")`)
-- BLE scope: **Both Central and Peripheral roles** fully implemented
-- UI framework: **Material 3** with Compose Multiplatform
-- Database factory: **Koin platform modules** (not expect/actual, since Android needs Context)
-- Timestamps: **kotlin.time.Clock.System** (stdlib, no kotlinx-datetime needed)
-
----
-
-## Project Structure (Implemented)
+## Project structure
 
 ```
-Bluechat-KMP/
-├── settings.gradle.kts          # includeBuild("../kable")
-├── build.gradle.kts
-├── gradle.properties
+bluechat-kmp/
+├── settings.gradle.kts            # includeBuild("../kable") — kable dbb7599, see README
 ├── gradle/libs.versions.toml
-├── composeApp/
-│   ├── build.gradle.kts
+├── composeApp/                    # app shell only
 │   └── src/
-│       ├── commonMain/kotlin/com/bluechat/
-│       │   └── App.kt           # NavHost with all routes
-│       ├── androidMain/
-│       │   ├── AndroidManifest.xml
-│       │   ├── res/values/styles.xml
-│       │   └── kotlin/com/bluechat/
-│       │       ├── MainActivity.kt      # Permissions + setContent
-│       │       └── BluechatApp.kt       # Application + startKoin
-│       └── iosMain/kotlin/com/bluechat/
-│           ├── MainViewController.kt
-│           └── KoinInit.kt
+│       ├── commonMain/.../App.kt              # NavHost, all routes
+│       ├── androidMain/.../
+│       │   ├── MainActivity.kt                # runtime permissions + setContent
+│       │   ├── BluechatApp.kt                 # startKoin, starts coordinator + session launcher
+│       │   └── service/
+│       │       ├── BluechatService.kt         # foreground service (connectedDevice)
+│       │       └── SessionServiceLauncher.kt  # starts/stops it from BleSessionMonitor
+│       └── iosMain/.../  MainViewController.kt, KoinInit.kt
 ├── shared/
-│   ├── build.gradle.kts
-│   ├── schemas/                  # Room auto-generated (v1, v2)
+│   ├── schemas/                   # Room exports: 1, 2, 5, 6, 7, 8 (3 and 4 were never exported)
 │   └── src/
 │       ├── commonMain/kotlin/com/bluechat/
+│       │   ├── data/
+│       │   │   ├── ble/           # KableCentralController, BleGattProfile, MtuNegotiation (expect)
+│       │   │   ├── protocol/      # Frame, Reassembler, Envelope, ProtocolCodec, PeerMessageMapper
+│       │   │   ├── db/            # ChatDatabase (v8), entities + DAOs for messages, outbox,
+│       │   │   │                  #   contacts, conversations; ConversationSummaryRow
+│       │   │   └── repository/    # Chat, Contact, Conversation, MessageQueue, PeerDirectory impls
 │       │   ├── domain/
-│       │   │   ├── model/
-│       │   │   │   ├── BleDevice.kt          # Scanned device (id, name, rssi)
-│       │   │   │   ├── ChatMessage.kt        # Message with delivery status
-│       │   │   │   ├── ConnectionState.kt    # Disconnected/Connecting/Connected/Disconnecting
-│       │   │   │   ├── DeliveryStatus.kt     # Sending/Sent/Failed
-│       │   │   │   ├── ConnectedClient.kt    # Server mode client info
-│       │   │   │   └── ServerState.kt        # Idle/Advertising/Error
-│       │   │   └── repository/
-│       │   │       ├── BleController.kt      # Central role interface
-│       │   │       ├── BlePeripheralServer.kt # Peripheral role interface
-│       │   │       ├── ChatRepository.kt     # Message persistence
-│       │   │       └── AppPreferences.kt     # User settings interface
-│       │   ├── data/
-│       │   │   ├── ble/
-│       │   │   │   ├── BleGattProfile.kt         # GATT UUIDs
-│       │   │   │   └── KableCentralController.kt # Central implementation (kable)
-│       │   │   ├── db/
-│       │   │   │   ├── ChatDatabase.kt       # Room database (v2 with migration)
-│       │   │   │   ├── ChatMessageEntity.kt  # Entity with deliveryStatus
-│       │   │   │   ├── ChatMessageDao.kt     # Data access object
-│       │   │   │   └── DatabaseFactory.kt    # Builder interface
-│       │   │   └── repository/
-│       │   │       └── ChatRepositoryImpl.kt # Repository implementation
-│       │   ├── di/
-│       │   │   └── SharedModule.kt           # Cross-platform DI
-│       │   ├── presentation/
-│       │   │   ├── device/       # DeviceViewModel, DeviceScreen, DeviceUiState
-│       │   │   ├── chat/         # ChatViewModel, ChatScreen, ChatUiState
-│       │   │   ├── server/       # ServerViewModel, ServerScreen, ServerUiState
-│       │   │   │               # ServerChatViewModel, BroadcastChatViewModel
-│       │   │   ├── settings/     # SettingsViewModel, SettingsScreen, SettingsUiState
-│       │   │   ├── notification/ # MessageNotifier interface
-│       │   │   └── components/   # ChatBubble, DeviceListItem
-│       │   └── ui/theme/         # Colors (OldRose, Vanilla)
-│       ├── androidMain/kotlin/com/bluechat/
-│       │   ├── data/
-│       │   │   ├── ble/
-│       │   │   │   └── AndroidBlePeripheralServer.kt  # GATT Server + Advertiser
-│       │   │   ├── db/
-│       │   │   │   └── DatabaseFactory.android.kt     # Room builder with Context
-│       │   │   └── preferences/
-│       │   │       └── AndroidAppPreferences.kt       # DataStore preferences
-│       │   ├── di/
-│       │   │   └── AndroidModule.kt                   # Android DI bindings
-│       │   └── presentation/notification/
-│       │       └── AndroidMessageNotifier.kt          # Android notifications
-│       └── iosMain/kotlin/com/bluechat/
-│           ├── data/
-│           │   ├── ble/
-│           │   │   └── IosBlePeripheralServer.kt      # CBPeripheralManager
-│           │   ├── db/
-│           │   │   └── DatabaseFactory.ios.kt         # Room builder (NSHomeDirectory)
-│           │   └── preferences/
-│           │       └── IosAppPreferences.kt           # NSUserDefaults preferences
-│           ├── di/
-│           │   └── IosModule.kt                       # iOS DI bindings
-│           └── presentation/notification/
-│               └── IosMessageNotifier.kt              # iOS notifications
-└── doc/
-    └── plan.md                   # This file
+│       │   │   ├── model/         # BleDevice, ChatMessage, Contact, Conversation, DeliveryStatus,
+│       │   │   │                  #   ConnectionState, ServerState, ConnectedClient, PeerMessage,
+│       │   │   │                  #   PendingMessage
+│       │   │   ├── repository/    # interfaces: BleController, BlePeripheralServer, ChatRepository,
+│       │   │   │                  #   ContactRepository, ConversationRepository,
+│       │   │   │                  #   MessageQueueRepository, PeerDirectory, AppPreferences
+│       │   │   ├── messaging/     # IncomingMessageCoordinator
+│       │   │   ├── session/       # BleSessionMonitor
+│       │   │   └── notification/  # MessageNotifier (expect)
+│       │   ├── presentation/      # conversations, contacts, device, chat, server, settings,
+│       │   │                      #   components (ChatBubble, DateSeparator, TypingIndicator,
+│       │   │                      #   ReconnectingBanner, SignalStrengthIndicator, list items)
+│       │   ├── di/                # SharedModule
+│       │   ├── ui/theme/          # Colors (OldRose, Vanilla), Theme
+│       │   └── util/              # TimeFormatter (expect), SignalStrength
+│       ├── commonTest/            # 7 test files, 67 tests (protocol, repository, ViewModels)
+│       ├── androidMain/           # AndroidBlePeripheralServer, MtuNegotiation, DatabaseFactory,
+│       │                          #   AndroidAppPreferences, MessageNotifier, AndroidModule
+│       └── iosMain/               # IosBlePeripheralServer, MtuNegotiation, DatabaseFactory,
+│                                  #   IosAppPreferences, MessageNotifier, IosModule
+├── iosApp/                        # Xcode project; build phase runs embedAndSignAppleFrameworkForXcode
+└── doc/                           # this file, roadmap.md, device-test-findings.md
 ```
 
----
-
-## Tech Stack (Actual Versions)
-
-| Component | Library | Version | Notes |
-|-----------|---------|---------|-------|
-| Kotlin | kotlin-multiplatform | 2.2.21 | Aligned with kable fork |
-| AGP | android-application/library | 8.12.2 | Aligned with kable fork |
-| Compose MP | org.jetbrains.compose | 1.10.1 | `compose.xxx` accessors (deprecated but functional) |
-| Compose Compiler | kotlin.plugin.compose | 2.2.21 | Bundled with Kotlin |
-| BLE | kable-core (local fork) | composite build | `includeBuild("../kable")` |
-| DI | Koin | 4.1.0 | koin-compose-viewmodel for KMP VM injection |
-| ViewModel | lifecycle-viewmodel-compose | 2.9.6 | JetBrains KMP wrapper |
-| Navigation | navigation-compose | 2.9.2 | JetBrains KMP wrapper |
-| Persistence | Room KMP | 2.7.1 | KSP 2.2.21-2.0.4 |
-| SQLite | sqlite-bundled | 2.5.0 | Bundled driver for KMP |
-| Coroutines | kotlinx-coroutines | 1.10.2 | |
-| Activity | activity-compose | 1.10.1 | Android only (setContent) |
-| compileSdk | | 36 | Required by androidx.core:core:1.17.0 |
-| minSdk | | 24 | |
-| Gradle | | 9.2.1 | Aligned with kable fork |
-
----
-
-## Architecture
+## Layers
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                 Presentation (Compose MP + ViewModel)           │
-│   DeviceScreen, ChatScreen, ServerScreen, SettingsScreen        │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ StateFlow<UiState>
-┌────────────────────────────▼────────────────────────────────────┐
-│                        Domain Layer                              │
-│  Interfaces: BleController, BlePeripheralServer, ChatRepository  │
-│              AppPreferences, MessageNotifier                     │
-│  Models: BleDevice, ChatMessage, ConnectionState, DeliveryStatus │
-│          ConnectedClient, ServerState                            │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ implementations
-┌────────────────────────────▼────────────────────────────────────┐
-│                         Data Layer                               │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ commonMain                                                │   │
-│  │  ├── KableCentralController (kable Scanner + Peripheral)  │   │
-│  │  ├── Room ChatDatabase (v2 with migration)                │   │
-│  │  └── ChatRepositoryImpl                                   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│  ┌───────────────────────┐  ┌────────────────────────────────┐  │
-│  │ androidMain           │  │ iosMain                        │  │
-│  │  ├── BlePeripheralSrv │  │  ├── BlePeripheralServer      │  │
-│  │  │   (BluetoothGatt)  │  │  │   (CBPeripheralManager)    │  │
-│  │  ├── AppPreferences   │  │  ├── AppPreferences           │  │
-│  │  │   (DataStore)      │  │  │   (NSUserDefaults)         │  │
-│  │  └── MessageNotifier  │  │  └── MessageNotifier          │  │
-│  └───────────────────────┘  └────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│ Presentation  (Compose MP + ViewModel → StateFlow<UiState>)           │
+│  Conversations · Contacts · Device (new-chat picker) · Chat ·         │
+│  Server · ServerChat · BroadcastChat · Settings                       │
+└──────────────────────────────┬────────────────────────────────────────┘
+                               │ reads Room-backed flows, calls repositories
+┌──────────────────────────────▼────────────────────────────────────────┐
+│ Domain                                                                │
+│  interfaces: BleController, BlePeripheralServer, *Repository,         │
+│              PeerDirectory, AppPreferences, MessageNotifier           │
+│  process-wide: IncomingMessageCoordinator, BleSessionMonitor          │
+└──────────────────────────────┬────────────────────────────────────────┘
+                               │ implementations
+┌──────────────────────────────▼────────────────────────────────────────┐
+│ Data                                                                  │
+│  commonMain: KableCentralController · protocol/ · Room ChatDatabase · │
+│              repository impls                                         │
+│  androidMain: AndroidBlePeripheralServer (BluetoothGattServer)        │
+│  iosMain:     IosBlePeripheralServer (CBPeripheralManager)            │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-### Navigation Routes
+**Inbound messages flow in one direction only.** Both roles' `incomingMessages` flows are
+collected by `IncomingMessageCoordinator`, which is started from `BluechatApp.onCreate()` /
+`initKoin()` and runs for the life of the process. It decodes, drops messages from blocked
+contacts, persists, mirrors server traffic into the `broadcast` thread, and raises
+notifications. ViewModels only read from Room. This rule fixed defect #4.
+
+**Long-lived singletons.** `BleController`, `BlePeripheralServer`, the coordinator and
+`BleSessionMonitor` are Koin `single`s. ViewModels never `release()` them (defect #10).
+`BleSessionMonitor` combines both roles' state into one flow. The Android
+`SessionServiceLauncher` uses that flow to start or stop the foreground service.
+
+## Navigation routes
+
+Start destination: `conversations`.
 
 ```
-devices                          # Home screen - scan & server mode
-  ├── chat/{deviceId}           # 1-to-1 chat (Central mode)
-  ├── settings                  # User preferences
-  └── server                    # Server control panel (Peripheral mode)
-        ├── server/chat/{clientId}   # Chat with specific client
-        └── server/broadcast         # Broadcast to all clients
+conversations                     # home: chat list
+├── devices                       # "New chat": scan + connect (central)
+│   └── chat/{deviceId}           # 1:1 chat, central role
+├── contacts                      # contacts list
+├── server                        # Server Mode control panel (peripheral)
+│   ├── server/chat/{clientId}    # 1:1 chat with a connected client
+│   └── server/broadcast          # group chat to all clients
+└── settings                      # display name, theme
 ```
 
-### Platform Boundaries
+The chat list chooses between `chat/…` and `server/chat/…` based on the conversation's
+`peerTransportId`, checked against the server's connected clients (decision C2). A
+conversation can only be answered through the role that owns the connection.
+
+## Platform boundaries
 
 | Concern | Android | iOS |
 |---|---|---|
-| DB Builder | `Room.databaseBuilder(context, name)` via Koin | `Room.databaseBuilder(name)` via Koin |
-| Koin Init | `BluechatApp.onCreate()` with `androidContext()` | `KoinInit.initKoin()` |
-| Permissions | `ActivityResultContracts.RequestMultiplePermissions` | Info.plist |
-| BLE Identifier | MAC address (String) | UUID |
-| Peripheral Server | `BluetoothGattServer` + `BluetoothLeAdvertiser` | `CBPeripheralManager` |
-| Preferences | DataStore | NSUserDefaults |
-| Notifications | NotificationManager | UNUserNotificationCenter |
+| Koin init | `BluechatApp.onCreate()` with `androidContext()` | `KoinInit.initKoin()` |
+| DB builder | `Room.databaseBuilder(context, name)` via `AndroidModule` | `Room.databaseBuilder(name)` via `IosModule` |
+| Permissions | Runtime request in `MainActivity`. API 31+ `BLUETOOTH_SCAN/CONNECT/ADVERTISE`, ≤ 30 legacy `BLUETOOTH`/`BLUETOOTH_ADMIN` + location, `POST_NOTIFICATIONS` | `Info.plist` usage strings. No BLE background modes yet (F2) |
+| Transport id | MAC address | CoreBluetooth UUID |
+| Peripheral server | `BluetoothGattServer` + `BluetoothLeAdvertiser` | `CBPeripheralManager` (not device-verified) |
+| MTU | `requestMtu(517)` | Negotiated by CoreBluetooth |
+| Background | `BluechatService` foreground service | none yet |
+| Preferences | `SharedPreferences` (`bluechat_prefs`) | `NSUserDefaults` |
+| Notifications | `NotificationManager` | `UNUserNotificationCenter` |
 
----
+## Wire protocol
 
-## Implementation Phases
+All traffic goes over one GATT characteristic. In both directions a payload is:
 
-### Phase 1: Project Skeleton -- DONE
-- settings.gradle.kts, root build.gradle.kts, libs.versions.toml, gradle.properties
-- shared + composeApp module build files
-- Minimal App.kt, MainActivity.kt, MainViewController.kt
-- Gradle wrapper (9.2.1 from kable)
-- Verified: `assembleDebug` + `compileKotlinIosSimulatorArm64` pass
+1. **An envelope**: a JSON-serialized `Envelope` (kotlinx.serialization, `ProtocolCodec`):
 
-**Deviations from plan:**
-- Added `compose-multiplatform` Gradle plugin back (needed for `compose.xxx` accessors since direct Maven coords like `org.jetbrains.compose.material3:material3` don't exist)
-- Used `compilerOptions { jvmTarget.set(...) }` instead of deprecated `kotlinOptions`
-- compileSdk bumped to 36 (required by transitive `androidx.core:core:1.17.0`)
-- Added `activity-compose` dependency for `setContent` in Activity
+   | Type (`@SerialName`) | Fields | Purpose |
+   |---|---|---|
+   | `text` | `senderId`, `messageId`, `sentAt`, `body` | chat message |
+   | `profile` | `senderId`, `displayName` | identity exchange, sent by both sides on connect |
+   | `read` | `senderId`, `messageId` | read receipt |
+   | `typing` | `senderId`, `isTyping` | typing indicator, never persisted |
 
-### Phase 2: Domain Models + Room Database -- DONE
-- Domain: BleDevice, ChatMessage, ConnectionState, BleController, ChatRepository
-- Room: ChatMessageEntity, ChatMessageDao, ChatDatabase
-- DatabaseFactory as plain function (not expect/actual) -- platform builder provided via Koin
-- ChatRepositoryImpl with entity<->domain mappers
-- Uses `Dispatchers.IO` (imported as `kotlinx.coroutines.IO` for KMP)
+   `senderId` is the stable per-install peer id. `PeerDirectory` maps transport addresses to it.
 
-**Deviations from plan:**
-- No expect/actual for `getDatabaseBuilder()` -- Android needs Context parameter, so the builder is provided through platform-specific Koin modules instead
-- `BundledSQLiteDriver` used for cross-platform SQLite
+2. **Split into frames** (`Frame`, `Reassembler`) sized to the negotiated MTU (`MTU − 3`
+   bytes per write). Each frame has a 10-byte big-endian header:
+   `version(1) flags(1) messageId(4) sequence(2) total(2)`. Incomplete sets time out, and
+   reassembly is capped at 256 KiB. UTF-8 is decoded only after reassembly.
 
-### Phase 3: BLE Central (kable) -- DONE
-- BleGattProfile with UUIDs from BluetoothLEChat (SERVICE_UUID, MESSAGE characteristic, etc.)
-- KableCentralController implementing BleController interface
-- Scanner with `filters { match { services = listOf(SERVICE_UUID) } }`
-- Advertisement cache by identifier for later `Peripheral()` creation
-- `characteristicOf(Uuid, Uuid)` for lazy characteristic references (String variant deprecated at ERROR level)
-- `observe(messageChar)` for incoming, `write(messageChar, data)` for sending
-- Global opt-in: `kotlin.uuid.ExperimentalUuidApi`, `kotlin.time.ExperimentalTime`
+Writes from the central always use `WriteType.WithResponse`, because the characteristic
+declares only `PROPERTY_WRITE` (defect #2).
 
-### Phase 4: DI + Wiring -- DONE
-- SharedModule: DB, DAO, repositories, BLE controller, ViewModels
-- AndroidModule: `getDatabaseBuilder(context)`
-- IosModule: `getDatabaseBuilder()`
-- BluechatApp: `startKoin { androidContext(); modules(androidModule, sharedModule) }`
-- KoinInit: `startKoin { modules(iosModule, sharedModule) }`
-- ChatViewModel uses parametrized injection: `viewModel { params -> ChatViewModel(params.get(), get(), get()) }`
+### GATT profile (`BleGattProfile.kt`)
 
-### Phase 5: Compose UI (Material 3) -- DONE
-- DeviceScreen: LazyColumn of scanned devices, Start/Stop Scan buttons, connecting indicator
-- ChatScreen: LazyColumn of ChatBubbles, TextField + Send button, Disconnect in top bar
-- ChatBubble: Asymmetric rounded corners (15.dp), OldRose (`0xFFCD8B76`) for local, Vanilla (`0xFFE1D89F`) for remote
-- NavHost in App.kt: `"devices"` and `"chat/{deviceId}"` routes
-- ViewModels injected via `koinViewModel<>()` with `collectAsStateWithLifecycle()`
-- Auto-scroll to latest message via `LaunchedEffect(messages.size)`
+| Name | UUID | Use |
+|---|---|---|
+| `SERVICE_UUID` | `1706BBC0-88AB-4B8D-877E-2237916EE929` | the service. Advertised, and used as the scan filter |
+| `CHARACTERISTIC_MESSAGE_UUID` | `275348FB-C14D-4FD5-B434-7C3F351DEA5F` | read / write / notify, carries all frames |
+| `DESCRIPTOR_MESSAGE_UUID` | `45bda094-ff40-4cb8-835d-0da8742bb1eb` | custom descriptor on the message characteristic (inherited from BluetoothLEChat) |
+| CCCD | `00002902-0000-1000-8000-00805f9b34fb` | standard notification descriptor. Required, see defect #3 |
+| `CHARACTERISTIC_BLE_TRANSFER_UUID` | `482f1096-137b-46cc-8ca8-3457c15cc433` | reserved, not used |
+| `DESCRIPTOR_BLE_TRANSFER_UUID` | `421ecb34-bb49-4b70-a5ea-042c1f38ec32` | reserved, not used |
 
-**Deviations from plan:**
-- No Material Icons (not available in KMP Compose by default) -- used TextButton("Disconnect") and Button("Send") instead of icon buttons
-- Timestamps via `kotlin.time.Clock.System.now().toEpochMilliseconds()` (stdlib) instead of kotlinx-datetime (Clock.System removed in 0.7.x)
+**Advertising:** the advertisement carries only the 128-bit service UUID, which uses 18 of
+the 31 bytes. The phone's own Bluetooth name, unchanged, goes in the scan response. If it
+doesn't fit, the server retries without it. The app never renames the adapter (defect #7,
+B4).
 
-### Phase 6: Permissions -- DONE
-- AndroidManifest:
-  - `BLUETOOTH_SCAN` (with `neverForLocation`)
-  - `BLUETOOTH_CONNECT`
-  - `BLUETOOTH_ADVERTISE` (for server mode)
-  - `ACCESS_FINE_LOCATION` (fallback for BLE on older APIs)
-  - `POST_NOTIFICATIONS` (Android 13+)
-- `uses-feature android.hardware.bluetooth_le required=true`
-- Runtime: `ActivityResultContracts.RequestMultiplePermissions` in MainActivity
-- API 31+ check for BLE-specific permissions vs location fallback
-- iOS: Info.plist entries:
-  - `NSBluetoothAlwaysUsageDescription`
-  - `NSBluetoothPeripheralUsageDescription`
+## Database
 
-### Phase 7: BLE Peripheral/Server -- DONE
-- `BlePeripheralServer` interface in domain layer with:
-  - `startAdvertising()`, `stopAdvertising()`
-  - `sendToAll(message)`, `sendTo(clientId, message)`
-  - StateFlow streams: `serverState`, `connectedClients`, `incomingMessages`
-- Android implementation (`AndroidBlePeripheralServer.kt`):
-  - `BluetoothGattServer` + `BluetoothLeAdvertiser`
-  - Tracks connected devices by MAC address
-  - Handles GATT read/write/descriptor requests
-- iOS implementation (`IosBlePeripheralServer.kt`):
-  - `CBPeripheralManager` from CoreBluetooth
-  - Tracks connected centrals by UUID
-  - Uses Kotlin/Native interop for NSData conversion
-- Server UI: `ServerScreen`, `ServerViewModel`, `ServerUiState`
-- Additional permission: `BLUETOOTH_ADVERTISE` in AndroidManifest
+Room KMP with the bundled SQLite driver, **schema version 8**:
 
-### Phase 8: Quality of Life Improvements -- DONE
-- **Display Name Advertising**: Customizable device name in settings, used for BLE advertising
-- **Connection Retry**: Exponential backoff (1s, 2s, 4s delays, 3 attempts max)
-- **Delivery Status Tracking**: Messages show Sending/Sent/Failed states
-  - `DeliveryStatus` enum in domain layer
-  - `ChatMessageEntity` updated with `deliveryStatus` column
-  - Room database migration v1 → v2
-- **Broadcast Chat**: Send messages to all connected clients simultaneously
-  - `BroadcastChatViewModel` with `sendToAll()` functionality
-  - Special "broadcast" device ID for message persistence
-- **Notifications**: Platform-specific message notifications
-  - `MessageNotifier` interface with Android/iOS implementations
-  - Shows notification when message received from remote device
-- **Settings Screen**: User preferences UI
-  - `SettingsViewModel`, `SettingsScreen`, `SettingsUiState`
-  - `AppPreferences` interface with platform implementations
-  - Theme options: System, Light, Dark
-- **Server Chat**: 1-to-1 chat with specific connected clients
-  - `ServerChatViewModel` with client filtering
+| Table | Holds |
+|---|---|
+| `chat_messages` | message history per conversation, `messageUuid` (wire id), `deliveryStatus`, `readAt` |
+| `pending_messages` | outbox, drained on reconnect |
+| `contacts` | one row per peer id: `announcedName` (sent by the peer, untrusted), `nickname` (local, takes precedence), favourite, blocked |
+| `conversations` | **only** pinned/muted/archived flags. Created when a flag is first set. Last message, preview and unread count are computed in `ConversationDao.observeSummaries` (decision C1) |
 
----
+`DeliveryStatus`: `Queued, Sending, Sent, Delivered, Read, Failed` (`Delivered` is not set
+yet). `ConnectionState`: `Disconnected, Connecting, Connected, Disconnecting, Reconnecting`.
+`ServerState`: `Idle, Advertising, Error`.
 
-## Kable Integration (Local Fork)
+**Schema policy: no migrations.** A schema change is a version bump, and
+`fallbackToDestructiveMigration(dropAllTables = true)` wipes the database. This is a
+deliberate pre-release shortcut with a release gate (F0 in the roadmap). The v1 → v6
+`Migration` objects mentioned in the history below were deleted.
+
+## Tech stack
+
+| Component | Library | Version | Notes |
+|---|---|---|---|
+| Kotlin | kotlin-multiplatform | 2.2.21 | matches kable dbb7599 |
+| AGP | android-application/library | 8.12.2 | |
+| Gradle | wrapper | 9.2.1 | matches kable dbb7599 |
+| Compose MP | org.jetbrains.compose | 1.10.1 | `compose.xxx` accessors (deprecated but needed) |
+| BLE | kable-core | `dbb7599` = 0.42.0 + 2 (composite build) | `includeBuild("../kable")` |
+| Serialization | kotlinx-serialization-json | 1.9.0 | wire envelope |
+| DI | Koin | 4.1.0 | koin-compose-viewmodel |
+| ViewModel | lifecycle-viewmodel-compose | 2.9.6 | JetBrains KMP |
+| Navigation | navigation-compose | 2.9.2 | JetBrains KMP, string routes |
+| Persistence | Room KMP | 2.7.1 | KSP 2.2.21-2.0.4 |
+| SQLite | sqlite-bundled | 2.5.0 | |
+| Coroutines | kotlinx-coroutines | 1.10.2 | |
+| Tests | kotlin-test, coroutines-test, Turbine 1.2.0 | | `commonTest` |
+| Android SDK | | compile 36 / target 35 / min 24 | compile 36 required by androidx.core 1.17.0 |
+| Toolchain | | JDK 17 for kable | provided by the foojay resolver, see README |
+
+## Kable integration
 
 ```kotlin
 // settings.gradle.kts
-includeBuild("../kable")  // Gradle auto-substitutes com.juul.kable:* dependencies
+includeBuild("../kable")          // Gradle substitutes com.juul.kable:* automatically
 
 // shared/build.gradle.kts
-implementation(libs.kable.core)  // version-less, resolved from composite build
+implementation(libs.kable.core)   // no version, resolved from the composite build
 ```
 
-Fallback if composite build fails: `cd ../kable && ./gradlew publishToMavenLocal`, then add `mavenLocal()` to repositories.
+`../kable` must be upstream [JuulLabs/kable](https://github.com/JuulLabs/kable) at tag
+commit `dbb7599` (`0.42.0` plus two maintenance commits). 0.43+ needs Gradle 9.5+
+and Kotlin 2.3+, and 0.44+ also needs AGP 9. The project uses
+`AndroidPeripheral.requestMtu` and `maximumWriteValueLengthForType`, which are both present
+there. A local edit to kable's `settings.gradle.kts` adds the foojay toolchain resolver so
+Gradle can download JDK 17. The README has the snippet.
 
----
+## Verification
 
-## Verification Strategy
+Automated:
 
-1. **Build check:** `./gradlew :composeApp:assembleDebug` -- PASSING
-2. **iOS check:** `./gradlew :shared:compileKotlinIosSimulatorArm64` -- PASSING
-3. **Install:** `./gradlew :composeApp:installDebug`
-4. **BLE Central test:** Start scan → devices appear → tap device → ChatScreen → send message → verify on remote
-5. **Persistence test:** Send/receive messages → kill app → reopen → messages restored from Room
-6. **BLE Peripheral test:** Start Server → verify service advertised → receive from remote → reply
-7. **Broadcast test:** Start server → connect multiple clients → send broadcast → verify all clients receive
-8. **Delivery status test:** Send message → verify "Sending" → verify "Sent" (or "Failed" on error)
-9. **Settings test:** Change display name → start server → verify name appears in BLE advertisements
-10. **Notification test:** Receive message while app in background → verify notification appears
-
----
-
-## Critical Project Files
-
-### Core BLE
-- `shared/src/commonMain/kotlin/com/bluechat/data/ble/KableCentralController.kt` - Central BLE implementation
-- `shared/src/commonMain/kotlin/com/bluechat/data/ble/BleGattProfile.kt` - GATT UUIDs
-- `shared/src/androidMain/kotlin/com/bluechat/data/ble/AndroidBlePeripheralServer.kt` - Android GATT Server
-- `shared/src/iosMain/kotlin/com/bluechat/data/ble/IosBlePeripheralServer.kt` - iOS Peripheral Manager
-
-### Domain
-- `shared/src/commonMain/kotlin/com/bluechat/domain/repository/BleController.kt` - Central interface
-- `shared/src/commonMain/kotlin/com/bluechat/domain/repository/BlePeripheralServer.kt` - Server interface
-- `shared/src/commonMain/kotlin/com/bluechat/domain/model/` - All domain models
-
-### Database
-- `shared/src/commonMain/kotlin/com/bluechat/data/db/ChatDatabase.kt` - Room database
-- `shared/schemas/` - Room schema files (v1, v2)
-
-### Presentation
-- `shared/src/commonMain/kotlin/com/bluechat/presentation/chat/ChatViewModel.kt` - Central chat logic
-- `shared/src/commonMain/kotlin/com/bluechat/presentation/server/ServerViewModel.kt` - Server logic
-- `composeApp/src/commonMain/kotlin/com/bluechat/App.kt` - Navigation routes
-
-### DI
-- `shared/src/commonMain/kotlin/com/bluechat/di/SharedModule.kt` - Cross-platform DI
-- `shared/src/androidMain/kotlin/com/bluechat/di/AndroidModule.kt` - Android bindings
-- `shared/src/iosMain/kotlin/com/bluechat/di/IosModule.kt` - iOS bindings
-
-### External Dependencies
-- `kable/kable-core/` - KMP BLE library (local fork via composite build)
-
----
-
-## Known Issues / Notes
-
-- Compose MP `compose.xxx` accessors are deprecated in 1.10.1 but still functional. Direct Maven coordinates don't work (e.g. `org.jetbrains.compose.material3:material3` doesn't exist). Will migrate when Compose MP provides a BOM or correct artifact names.
-- `kotlin.uuid.Uuid` and `kotlin.time.Clock` are still experimental in Kotlin 2.2.21 -- global opt-in configured in `shared/build.gradle.kts`.
-- Room KSP generates schema into `shared/schemas/` on Android and iOS targets.
-- The `kable-default-permissions` module only provides manifest entries; runtime permission requests are handled manually in `MainActivity`.
-- Room database migration from v1 to v2 adds `deliveryStatus` column with default value "Sent".
-
----
-
-## Future Enhancements (Phase 9+)
-
-### High Priority
-1. **Read Receipts**: Show when the other party has read your message
-2. **Typing Indicators**: Show when the other party is typing
-3. **Message Timestamps in UI**: Display message send/receive times in chat bubbles
-4. **Connection Quality Indicator**: Show RSSI signal strength during active connection
-
-### Medium Priority
-5. **Offline Message Queue**: Queue messages when disconnected, send when reconnected
-6. **Message Search**: Search through chat history
-7. **Chat Export**: Export chat history to file
-8. **Multiple Simultaneous Connections (Central)**: Connect to multiple peripherals at once
-9. **Auto-Reconnect**: Automatically reconnect when connection drops unexpectedly
-10. **Device Favorites/Bookmarks**: Save frequently used devices for quick access
-
-### Nice to Have
-11. **File/Image Transfer**: Send files or images over BLE (chunked transfer)
-12. **End-to-End Encryption**: Encrypt messages for privacy
-13. **Group Chat Names**: Name server chat rooms
-14. **Accessibility**: VoiceOver/TalkBack support, dynamic text sizing
-15. **Widgets**: Quick-access widgets for Android/iOS
-
-### Technical Improvements
-16. **Unit Tests**: ViewModel and Repository tests with Turbine/MockK
-17. **UI Tests**: Compose UI tests with compose-test framework
-18. **CI/CD Pipeline**: GitHub Actions for build/test/deploy
-19. **Crash Reporting**: Integrate Firebase Crashlytics or similar
-20. **Analytics**: Usage tracking for feature prioritization
-
----
-
-## GATT Profile Reference
-
-```kotlin
-// Service and Characteristic UUIDs (BleGattProfile.kt)
-SERVICE_UUID          = "1706BBC0-88AB-4B8D-877E-2237916EE929"
-CHARACTERISTIC_MESSAGE = "275348FB-C14D-4FD5-B434-7C3F351DEA5F"
-DESCRIPTOR_MESSAGE    = "45bda094-ff40-4cb8-835d-0da8742bb1eb"
+```bash
+./gradlew :composeApp:assembleDebug
+./gradlew :shared:testDebugUnitTest                 # 67 tests
+./gradlew :shared:compileKotlinIosSimulatorArm64
 ```
 
-Characteristic properties: Read, Write, Notify
+On devices (two phones; there's no BLE in emulators). The procedure and the last results
+are in `device-test-findings.md`:
+
+1. Server Mode on phone A, **New chat** → scan → connect on phone B.
+2. Client → server and server → client messages, including a long one (> 300 chars,
+   multi-frame).
+3. Group chat with all clients.
+4. Read receipt: the server's message reaches `Read` once the client displays it.
+5. Persistence across app restarts. Notification while on another screen or in the
+   background.
+6. Background the server: the foreground service stays `isForeground=true` and the peer can
+   still connect.
+
+## Known issues / notes
+
+- Compose MP `compose.xxx` accessors are deprecated in 1.10.1 but still needed. Direct Maven
+  coordinates such as `org.jetbrains.compose.material3:material3` don't exist.
+- `kotlin.uuid.Uuid` and `kotlin.time.Clock` are experimental in Kotlin 2.2.21. A global
+  opt-in is set in `shared/build.gradle.kts`.
+- `kable-default-permissions` only adds manifest entries. Runtime permission requests happen
+  in `MainActivity`.
+- iOS has never been run on a device. See roadmap F2.
+- Open defects and deferred work are tracked in the roadmap's **Deferred** table.
+
+---
+
+# Part 2 — Build history (Phases 1–8)
+
+> These phases describe the first version of the app. Later work has replaced several
+> details. Notes marked **Superseded** point to the replacement. Phase 9 and phases A–F are
+> in `roadmap.md`.
+
+## Original context
+
+The project began as a KMP port of the BLE messaging in `BluetoothLEChat`, using kable as
+the transport.
+
+**Blueprint projects** (siblings on the original development machine, not in this repo):
+- `BluetoothLEChat`: BLE features (GATT profile, central/peripheral roles, chat over BLE).
+  `BLEChatProfile.java` is the source of the UUIDs, and `BLEPeripheralHelper.java` was ported
+  for the GATT server.
+- `BluetoothChat` / `BlueChat`: Compose UI patterns (DeviceScreen, ChatScreen, ChatBubble,
+  ViewModel + StateFlow).
+
+**Initial decisions** (still valid unless noted):
+- kable as a **composite build** (`includeBuild("../kable")`).
+- **Central role first**, peripheral later (Phase 7).
+- **Material 3** with Compose Multiplatform.
+- **Platform DB builders through Koin modules**, not expect/actual, because Android needs
+  a `Context`.
+- **Timestamps from `kotlin.time.Clock.System`**, without kotlinx-datetime.
+
+### Phase 1: Project skeleton — DONE
+- Gradle setup, `shared` + `composeApp` modules, minimal `App.kt` / `MainActivity` /
+  `MainViewController`, Gradle wrapper 9.2.1.
+- Deviations: the `compose-multiplatform` plugin was added back for the `compose.xxx`
+  accessors; `compilerOptions { jvmTarget }` replaced `kotlinOptions`; compileSdk was raised
+  to 36 for `androidx.core 1.17.0`; `activity-compose` was added for `setContent`.
+
+### Phase 2: Domain models + Room — DONE
+- Domain: BleDevice, ChatMessage, ConnectionState, BleController, ChatRepository.
+- Room: ChatMessageEntity, ChatMessageDao, ChatDatabase, with `BundledSQLiteDriver`.
+- `DatabaseFactory` is a plain function, and the platform builder comes from Koin.
+
+### Phase 3: BLE central (kable) — DONE
+- `BleGattProfile` UUIDs ported from BluetoothLEChat.
+- `KableCentralController`: a scanner filtered on `SERVICE_UUID`, an advertisement cache by
+  identifier, `characteristicOf(Uuid, Uuid)`, `observe` for incoming, `write` for outgoing.
+- Global opt-in for `ExperimentalUuidApi` and `ExperimentalTime`.
+- **Superseded:** raw-string payloads were replaced by the framed envelope protocol (Phase
+  A). Writes now use `WithResponse` (defect #2). The incoming flow is a `flatMapLatest` over
+  the current connection (defect #4).
+
+### Phase 4: DI + wiring — DONE
+- `SharedModule` plus `AndroidModule` / `IosModule`, `startKoin` in `BluechatApp` /
+  `KoinInit`.
+- Parametrised ViewModel injection for route arguments
+  (`viewModel { params -> ChatViewModel(params.get(), …) }`).
+
+### Phase 5: Compose UI (Material 3) — DONE
+- DeviceScreen (scan list), ChatScreen (bubbles, input, disconnect), ChatBubble (asymmetric
+  15 dp corners; OldRose `0xFFCD8B76` local, Vanilla `0xFFE1D89F` remote).
+- `koinViewModel()` + `collectAsStateWithLifecycle()`; auto-scroll with
+  `LaunchedEffect(messages.size)`.
+- No Material Icons in KMP by default, so text buttons are used instead.
+- **Superseded:** the home screen is now `conversations`, and `devices` is the "New chat"
+  picker (C2). DeviceScreen got a `Scaffold`/`TopAppBar` (defect #6).
+
+### Phase 6: Permissions — DONE
+- Manifest: `BLUETOOTH_SCAN` (`neverForLocation`), `BLUETOOTH_CONNECT`,
+  `BLUETOOTH_ADVERTISE`, `ACCESS_FINE_LOCATION`, `POST_NOTIFICATIONS`, and
+  `uses-feature bluetooth_le`.
+- Runtime request in `MainActivity` with an API 31+ split.
+- iOS: `NSBluetoothAlwaysUsageDescription`, `NSBluetoothPeripheralUsageDescription`.
+- **Later additions:** legacy `BLUETOOTH` / `BLUETOOTH_ADMIN` for API ≤ 30 (defect #1), and
+  `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_CONNECTED_DEVICE` (E1).
+
+### Phase 7: BLE peripheral/server — DONE
+- `BlePeripheralServer` interface: `startAdvertising` / `stopAdvertising`, `sendToAll`,
+  `sendTo`, and flows for `serverState`, `connectedClients`, `incomingMessages`.
+- Android: `BluetoothGattServer` + `BluetoothLeAdvertiser`, clients tracked by MAC address.
+- iOS: `CBPeripheralManager`, centrals tracked by UUID.
+- Server UI: `ServerScreen` / `ServerViewModel`.
+- **Later changes:** a standard CCCD was added (defect #3), `lastError` with readable
+  advertise failure codes (defect #9), and leaving the screen no longer stops the server
+  (defect #11).
+
+### Phase 8: Quality-of-life — DONE
+- Connection retry with exponential backoff, later extended by auto-reconnect (E2).
+- Delivery status (`Sending/Sent/Failed`, later extended), broadcast chat
+  (`BroadcastChatViewModel`, the `broadcast` conversation id), server 1:1 chat
+  (`ServerChatViewModel`), notifications (`MessageNotifier`), Settings (display name, theme).
+- **Superseded:** the display name was originally advertised by renaming the phone's
+  Bluetooth adapter. That was removed in B4, and the name now travels in `Envelope.Profile`.
+  The Room v1 → v2 migration for `deliveryStatus` was deleted under the no-migrations policy.
