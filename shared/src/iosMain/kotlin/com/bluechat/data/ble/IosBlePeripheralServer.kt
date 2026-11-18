@@ -229,6 +229,14 @@ class IosBlePeripheralServer(
         sendEnvelope(central, textEnvelope(messageId, body))
     }
 
+    override suspend fun sendReadReceipt(transportId: String, messageId: String) {
+        val central = connectedCentrals[transportId] ?: return
+        sendEnvelope(
+            central,
+            Envelope.ReadReceipt(senderId = appPreferences.localPeerId, messageId = messageId),
+        )
+    }
+
     private suspend fun textEnvelope(messageId: String, body: String) = Envelope.Text(
         senderId = appPreferences.localPeerId,
         messageId = messageId,

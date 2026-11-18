@@ -1,6 +1,7 @@
 package com.bluechat
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -9,8 +10,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.bluechat.domain.notification.AndroidMessageNotifier
+import com.bluechat.presentation.navigation.ConversationDeepLinks
+import org.koin.android.ext.android.inject
 
 class MainActivity : ComponentActivity() {
+
+    private val deepLinks: ConversationDeepLinks by inject()
 
     private val requiredPermissions = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -32,9 +38,22 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestPermissionsIfNeeded()
+        // Only on a fresh start: after a configuration change the intent is the same one that
+        // was already handled.
+        if (savedInstanceState == null) handleNotificationTap(intent)
         setContent {
             App()
         }
+    }
+
+    // A notification tapped while the app is already running (launchMode="singleTask").
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleNotificationTap(intent)
+    }
+
+    private fun handleNotificationTap(intent: Intent?) {
+        intent?.getStringExtra(AndroidMessageNotifier.EXTRA_CONVERSATION_ID)?.let(deepLinks::open)
     }
 
     private fun requestPermissionsIfNeeded() {

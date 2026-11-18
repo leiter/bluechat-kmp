@@ -1,6 +1,9 @@
 package com.bluechat.presentation.contacts
 
 import app.cash.turbine.test
+import com.bluechat.domain.presence.PresenceTracker
+import com.bluechat.presentation.conversations.FakePeripheralServer
+import com.bluechat.presentation.device.FakeBleController
 import com.bluechat.presentation.device.FakeContactRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,6 +34,14 @@ class ContactsViewModelTest {
     @AfterTest
     fun tearDown() = Dispatchers.resetMain()
 
+    private val bleController = FakeBleController()
+
+    private fun createViewModel() = ContactsViewModel(
+        contactRepository = repository,
+        presenceTracker = PresenceTracker(bleController, FakePeripheralServer(), repository, tickMillis = 0),
+        bleController = bleController,
+    )
+
     private suspend fun stateAfterLoad(viewModel: ContactsViewModel): ContactsUiState {
         var result: ContactsUiState? = null
         viewModel.state.test {
@@ -47,7 +58,7 @@ class ContactsViewModelTest {
         // The announced name is no longer displayed once renamed, so searching for the only
         // name the user was ever told must still find the contact.
         repository.addContact(contactId = "peer-1", announcedName = "Alice", nickname = "Mum")
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
         viewModel.onQueryChanged("Alice")
 
         val state = stateAfterLoad(viewModel)
@@ -57,7 +68,7 @@ class ContactsViewModelTest {
     @Test
     fun `search matches the local nickname and the id`() = runTest {
         repository.addContact(contactId = "peer-abc123", announcedName = "Alice", nickname = "Mum")
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
 
         viewModel.onQueryChanged("mum")
         assertEquals(1, stateAfterLoad(viewModel).visibleContacts.size)
@@ -73,7 +84,7 @@ class ContactsViewModelTest {
 
     @Test
     fun `an empty contact list is distinguished from a search with no matches`() = runTest {
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
         val empty = stateAfterLoad(viewModel)
         assertTrue(empty.isEmpty)
         assertFalse(empty.hasNoMatches)
@@ -82,7 +93,7 @@ class ContactsViewModelTest {
     @Test
     fun `renaming sets a nickname and a blank one clears it`() = runTest {
         repository.addContact(contactId = "peer-1", announcedName = "Alice")
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
 
         viewModel.rename("peer-1", "Mum")
         testDispatcher.scheduler.advanceUntilIdle()
@@ -98,7 +109,7 @@ class ContactsViewModelTest {
     @Test
     fun `blocking and unblocking reach the repository`() = runTest {
         repository.addContact(contactId = "peer-1")
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
 
         viewModel.setBlocked("peer-1", true)
         testDispatcher.scheduler.advanceUntilIdle()
@@ -112,7 +123,7 @@ class ContactsViewModelTest {
     @Test
     fun `deleting removes the contact`() = runTest {
         repository.addContact(contactId = "peer-1")
-        val viewModel = ContactsViewModel(repository)
+        val viewModel = createViewModel()
 
         viewModel.delete("peer-1")
         testDispatcher.scheduler.advanceUntilIdle()

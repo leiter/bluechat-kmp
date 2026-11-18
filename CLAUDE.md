@@ -33,7 +33,7 @@ protocol, GATT, schema). Its Part 2 is history.
 | Peripheral / GATT server | `AndroidBlePeripheralServer` (`BluetoothGattServer` + `BluetoothLeAdvertiser`) — device-verified | `IosBlePeripheralServer` (`CBPeripheralManager`) — not device-verified |
 | MTU negotiation | `MtuNegotiation.android.kt` (`requestMtu(517)`) | `MtuNegotiation.ios.kt` (OS-negotiated) |
 | Background session | `BluechatService` foreground service (`connectedDevice` type) | none (F2) |
-| Notifications | `MessageNotifier.android.kt` | `MessageNotifier.ios.kt` |
+| Notifications | `AndroidMessageNotifier`: one `MessagingStyle` notification per conversation, tap opens the chat | `IosMessageNotifier`: grouped per conversation, tap does not open the chat yet |
 | Preferences | `SharedPreferences` (`bluechat_prefs`) | `NSUserDefaults` |
 | Peer id in transport | MAC address | CoreBluetooth UUID |
 
@@ -52,6 +52,13 @@ protocol, GATT, schema). Its Part 2 is history.
 - **Singletons:** `BleController`, `BlePeripheralServer`, the coordinator and
   `BleSessionMonitor` are Koin `single`s that live as long as the process. ViewModels must not
   call `release()` on them in `onCleared()` (defect #10).
+- **Scanning is shared:** new code holds the scan with `BleController.setScanHold(holder, true)`
+  and releases only its own hold. Never call `startScan()`/`stopScan()` from anything but the
+  device picker, or you stop someone else's scan (B5).
+- **"On screen" is resume/pause, not ViewModel lifetime.** Anything that should only happen
+  while a screen is visible (suppressing notifications, read receipts, presence scanning)
+  hangs off `onVisibilityChanged`, which `App.kt` calls from `LifecycleResumeEffect`. A
+  ViewModel stays alive with the app in the background.
 - **Wire protocol** (`data/protocol/`): payload = JSON `Envelope` (`text`, `profile`, `read`,
   `typing`), split into frames with a 10-byte header (`Frame.kt` documents the layout),
   reassembled by `Reassembler`. Decode UTF-8 only after reassembly. Writes use
@@ -91,6 +98,8 @@ bound in `AndroidModule` / `IosModule`. Use `expect/actual` only for small state
 - **Kotlin functions starting with `init` are renamed for Swift.** Kotlin/Native exports
   `initKoin()` as `doInitKoin()`, because Objective-C reserves the `init` prefix. Check the
   generated `ComposeApp.h` when Swift can't find a Kotlin symbol.
+- **Endless ticker flows hang `advanceUntilIdle()`.** `PresenceTracker` re-evaluates every
+  5 s. Tests construct it with `tickMillis = 0`, which evaluates once.
 - **Don't hard-code `JAVA_HOME` in the Xcode build phase.** It used to point at a Homebrew
   path from another machine. The phase now falls back to Android Studio's JBR.
 - **Verify iOS changes with `xcodebuild`.** `compileKotlinIosSimulatorArm64` doesn't compile

@@ -35,6 +35,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.bluechat.domain.model.Contact
+import com.bluechat.domain.presence.Presence
+import com.bluechat.presentation.components.PresenceIndicator
+import com.bluechat.presentation.components.presenceLabel
+import com.bluechat.util.formatRelativeTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,6 +88,7 @@ fun ContactsScreen(
                     items(state.visibleContacts, key = { it.contactId }) { contact ->
                         ContactRow(
                             contact = contact,
+                            presence = state.presenceOf(contact),
                             onRename = { renaming = contact },
                             onToggleFavourite = {
                                 onSetFavourite(contact.contactId, !contact.isFavourite)
@@ -135,6 +140,7 @@ fun ContactsScreen(
 @Composable
 private fun ContactRow(
     contact: Contact,
+    presence: Presence,
     onRename: () -> Unit,
     onToggleFavourite: () -> Unit,
     onToggleBlocked: () -> Unit,
@@ -152,6 +158,10 @@ private fun ContactRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (presence != Presence.NotNearby) {
+                        PresenceIndicator(presence)
+                        Spacer(Modifier.width(6.dp))
+                    }
                     Text(
                         text = contact.displayName,
                         style = MaterialTheme.typography.bodyLarge,
@@ -164,16 +174,19 @@ private fun ContactRow(
                         Text("★", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
+                // B5: reachability first, because it decides what the user can do next.
+                val reachability = presenceLabel(presence)
+                    ?: "Last seen ${formatRelativeTime(contact.lastSeenAt)}"
+                val detail = when {
+                    // Showing the claimed name only when it differs makes a local rename
+                    // visible, instead of quietly hiding what the peer calls itself.
+                    contact.nickname != null && !contact.announcedName.isNullOrBlank() ->
+                        "Calls itself “${contact.announcedName}”"
+                    !contact.isNamed -> contact.contactId
+                    else -> contact.contactId.take(Contact.SHORT_ID_LENGTH)
+                }
                 Text(
-                    text = when {
-                        contact.isBlocked -> "Blocked"
-                        // Showing the claimed name only when it differs makes a local rename
-                        // visible, instead of quietly hiding what the peer calls itself.
-                        contact.nickname != null && !contact.announcedName.isNullOrBlank() ->
-                            "Calls itself “${contact.announcedName}”"
-                        !contact.isNamed -> contact.contactId
-                        else -> contact.contactId.take(Contact.SHORT_ID_LENGTH)
-                    },
+                    text = if (contact.isBlocked) "Blocked" else "$reachability · $detail",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (contact.isBlocked) {
                         MaterialTheme.colorScheme.error

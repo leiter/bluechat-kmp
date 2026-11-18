@@ -16,6 +16,7 @@ import com.juul.kable.State
 import com.juul.kable.WriteType
 import com.juul.kable.characteristicOf
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -124,47 +125,100 @@ class KableCentralController(
         }
 
     override fun startScan() {
-        if (scanJob?.isActive == true) return
-
-        _scannedDevices.value = emptyList()
-        advertisementCache.clear()
         _lastError.value = null
-
-        scanJob = scanner.advertisements
-            .onEach { advertisement ->
-                val id = advertisement.identifier.toString()
-                advertisementCache[id] = advertisement
-                _scannedDevices.update { devices ->
-                    val existing = devices.indexOfFirst { it.identifier == id }
-                    val device = BleDevice(
-                        identifier = id,
-                        // `peripheralName` is what the device is broadcasting right now;
-                        // `name` is the OS's cached name for that address, which can be stale
-                        // for as long as the cache lives. Preferring the cache made a peer go
-                        // on showing a name it had stopped advertising -- visible as soon as
-                        // B4 stopped renaming the adapter, when a server advertising "Pixel 2"
-                        // still listed as "Bluechat" on a phone that had seen the old build.
-                        name = advertisement.peripheralName ?: advertisement.name,
-                        rssi = advertisement.rssi,
-                    )
-                    if (existing >= 0) {
-                        devices.toMutableList().apply { set(existing, device) }
-                    } else {
-                        devices + device
-                    }
-                }
-            }
-            .catch { e ->
-                // Never swallow this: a failed scan is otherwise indistinguishable from
-                // "no devices nearby", which is extremely hard to diagnose.
-                _lastError.value = "Scan failed: ${e.message ?: e::class.simpleName}"
-            }
-            .launchIn(scope)
+        setScanHold(SCAN_HOLDER_PICKER, true)
     }
 
     override fun stopScan() {
-        scanJob?.cancel()
-        scanJob = null
+        setScanHold(SCAN_HOLDER_PICKER, false)
+    }
+
+    /**
+     * All scan state is touched on this one serial dispatcher, so holders, the scan job and
+     * the pending stop never race, without a lock.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val scanControl = Dispatchers.Default.limitedParallelism(1)
+    private val scanHolders = mutableSetOf<String>()
+    private var pendingScanStop: Job? = null
+
+    override fun setScanHold(holder: String, active: Boolean) {
+        scope.launch(scanControl) {
+            if (active) scanHolders += holder else scanHolders -= holder
+
+            if (scanHolders.isNotEmpty()) {
+                pendingScanStop?.cancel()
+                pendingScanStop = null
+                // Also restarts a scan that died, e.g. on missing permission: the screen
+                // re-acquires its hold when it resumes after the permission dialog.
+                if (scanJob?.isActive != true) launchScan()
+            } else if (scanJob?.isActive == true && pendingScanStop == null) {
+                // Stop a little later, so moving between two screens that both hold the scan
+                // does not restart it. Android silently stops delivering results to an app
+                // that starts more than five scans in 30 seconds.
+                pendingScanStop = scope.launch(scanControl) {
+                    delay(SCAN_STOP_GRACE_MILLIS)
+                    if (scanHolders.isEmpty()) {
+                        scanJob?.cancel()
+                        scanJob = null
+                    }
+                    pendingScanStop = null
+                }
+            }
+        }
+    }
+
+    private fun launchScan() {
+        scanJob = scope.launch {
+            // Results age out instead of being cleared on every start (defect #12): a device
+            // that stopped advertising leaves the list, one still in range stays.
+            val pruning = launch {
+                while (true) {
+                    pruneStaleDevices()
+                    delay(SCAN_PRUNE_INTERVAL_MILLIS)
+                }
+            }
+            try {
+                scanner.advertisements.collect { advertisement ->
+                    val id = advertisement.identifier.toString()
+                    advertisementCache[id] = advertisement
+                    _scannedDevices.update { devices ->
+                        val existing = devices.indexOfFirst { it.identifier == id }
+                        val device = BleDevice(
+                            identifier = id,
+                            // `peripheralName` is what the device is broadcasting right now;
+                            // `name` is the OS's cached name for that address, which can be stale
+                            // for as long as the cache lives. Preferring the cache made a peer go
+                            // on showing a name it had stopped advertising -- visible as soon as
+                            // B4 stopped renaming the adapter, when a server advertising "Pixel 2"
+                            // still listed as "Bluechat" on a phone that had seen the old build.
+                            name = advertisement.peripheralName ?: advertisement.name,
+                            rssi = advertisement.rssi,
+                            lastSeenAt = Clock.System.now().toEpochMilliseconds(),
+                        )
+                        if (existing >= 0) {
+                            devices.toMutableList().apply { set(existing, device) }
+                        } else {
+                            devices + device
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Never swallow this: a failed scan is otherwise indistinguishable from
+                // "no devices nearby", which is extremely hard to diagnose.
+                _lastError.value = "Scan failed: ${e.message ?: e::class.simpleName}"
+            } finally {
+                // Ends the job, so the next hold starts a fresh scan.
+                pruning.cancel()
+            }
+        }
+    }
+
+    private fun pruneStaleDevices() {
+        val cutoff = Clock.System.now().toEpochMilliseconds() - BleDevice.NEARBY_WINDOW_MILLIS
+        _scannedDevices.update { devices -> devices.filter { it.lastSeenAt >= cutoff } }
     }
 
     override fun clearError() {
@@ -289,10 +343,11 @@ class KableCentralController(
                 val deviceId = currentDeviceId ?: break
 
                 if (advertisementCache[deviceId] == null) {
-                    // Lost the advertisement; go looking for it again.
-                    startScan()
+                    // Lost the advertisement; go looking for it again. Its own hold, so this
+                    // neither stops nor is stopped by the picker's or the chat list's scan.
+                    setScanHold(SCAN_HOLDER_RECONNECT, true)
                     delay(RECONNECT_SCAN_MILLIS)
-                    stopScan()
+                    setScanHold(SCAN_HOLDER_RECONNECT, false)
                 }
 
                 val ad = advertisementCache[deviceId]
@@ -441,7 +496,7 @@ class KableCentralController(
     }
 
     override fun release() {
-        stopScan()
+        scanJob?.cancel()
         stopRssiPolling()
         reconnectJob?.cancel()
         stateObserverJob?.cancel()
@@ -454,6 +509,10 @@ class KableCentralController(
         const val MAX_RECONNECT_ATTEMPTS = 5
         const val RSSI_POLL_INTERVAL_MILLIS = 2000L
         const val RECONNECT_SCAN_MILLIS = 2000L
+        const val SCAN_STOP_GRACE_MILLIS = 2000L
+        const val SCAN_PRUNE_INTERVAL_MILLIS = 5000L
+        const val SCAN_HOLDER_PICKER = "picker"
+        const val SCAN_HOLDER_RECONNECT = "reconnect"
         val RECONNECT_BACKOFF_MILLIS = longArrayOf(1000L, 2000L, 4000L, 8000L, 16000L)
     }
 }

@@ -387,6 +387,14 @@ class AndroidBlePeripheralServer(
         sendEnvelope(device, textEnvelope(messageId, body))
     }
 
+    override suspend fun sendReadReceipt(transportId: String, messageId: String) {
+        val device = connectedDevices.find { it.address == transportId } ?: return
+        sendEnvelope(
+            device,
+            Envelope.ReadReceipt(senderId = appPreferences.localPeerId, messageId = messageId),
+        )
+    }
+
     private fun textEnvelope(messageId: String, body: String) = Envelope.Text(
         senderId = appPreferences.localPeerId,
         messageId = messageId,

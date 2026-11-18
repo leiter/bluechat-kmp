@@ -32,15 +32,17 @@ Features as of today:
 
 - **Conversation list** as the home screen. It is derived from the messages and has
   pinned/muted/archived flags.
-- **Contacts** keyed on a stable per-install peer id. The name a peer announces and the
-  local nickname are kept separate, and contacts can be favourited or blocked.
+- **Contacts** keyed on a stable per-install peer id, created automatically on first
+  contact. The name a peer announces and the local nickname are kept separate, and contacts
+  can be favourited or blocked.
+- **Presence:** each contact shows as connected, nearby (advertising) or neither.
 - **1:1 chat** in both roles, plus **group/broadcast chat** on the server.
 - **Framed wire protocol** with MTU negotiation (up to 517), so message length isn't
   limited.
-- **Delivery and read receipts, typing indicator, an outbox with retry, and auto-reconnect**
-  with exponential backoff.
-- **Notifications**, plus an Android **foreground service** that keeps the session alive in
-  the background.
+- **Delivery and read receipts in both directions** (sent while the chat is on screen),
+  **typing indicator, an outbox with retry, and auto-reconnect** with exponential backoff.
+- **Notifications**, one per conversation, that open the chat when tapped, plus an Android
+  **foreground service** that keeps the session alive in the background.
 - **Settings:** display name (sent to peers in the profile envelope) and theme
   (System/Light/Dark).
 
@@ -78,19 +80,21 @@ bluechat-kmp/
 │       │   │   │                  #   ContactRepository, ConversationRepository,
 │       │   │   │                  #   MessageQueueRepository, PeerDirectory, AppPreferences
 │       │   │   ├── messaging/     # IncomingMessageCoordinator
+│       │   │   ├── presence/      # PresenceTracker, Presence (B5)
 │       │   │   ├── session/       # BleSessionMonitor
-│       │   │   └── notification/  # MessageNotifier (expect)
+│       │   │   └── notification/  # MessageNotifier (interface), ConversationVisibility
 │       │   ├── presentation/      # conversations, contacts, device, chat, server, settings,
 │       │   │                      #   components (ChatBubble, DateSeparator, TypingIndicator,
 │       │   │                      #   ReconnectingBanner, SignalStrengthIndicator, list items)
 │       │   ├── di/                # SharedModule
 │       │   ├── ui/theme/          # Colors (OldRose, Vanilla), Theme
 │       │   └── util/              # TimeFormatter (expect), SignalStrength
-│       ├── commonTest/            # 7 test files, 67 tests (protocol, repository, ViewModels)
+│       ├── commonTest/            # 11 test files, 88 tests (protocol, repository, coordinator,
+│       │                          #   presence, visibility, ViewModels)
 │       ├── androidMain/           # AndroidBlePeripheralServer, MtuNegotiation, DatabaseFactory,
-│       │                          #   AndroidAppPreferences, MessageNotifier, AndroidModule
+│       │                          #   AndroidAppPreferences, AndroidMessageNotifier, AndroidModule
 │       └── iosMain/               # IosBlePeripheralServer, MtuNegotiation, DatabaseFactory,
-│                                  #   IosAppPreferences, MessageNotifier, IosModule
+│                                  #   IosAppPreferences, IosMessageNotifier, IosModule
 ├── iosApp/                        # Xcode project; build phase runs embedAndSignAppleFrameworkForXcode
 └── doc/                           # this file, roadmap.md, device-test-findings.md
 ```
@@ -126,10 +130,28 @@ collected by `IncomingMessageCoordinator`, which is started from `BluechatApp.on
 contacts, persists, mirrors server traffic into the `broadcast` thread, and raises
 notifications. ViewModels only read from Room. This rule fixed defect #4.
 
+**Notifications (E4)** are one per conversation. The coordinator skips muted conversations
+and the one on screen (`ConversationVisibility`, set by the chat screens on resume/pause).
+A tapped notification posts the conversation id to `ConversationDeepLinks`. `App` then
+returns to the chat list and opens it through the list's own click handler.
+
 **Long-lived singletons.** `BleController`, `BlePeripheralServer`, the coordinator and
 `BleSessionMonitor` are Koin `single`s. ViewModels never `release()` them (defect #10).
 `BleSessionMonitor` combines both roles' state into one flow. The Android
 `SessionServiceLauncher` uses that flow to start or stop the foreground service.
+
+**One shared scan, held by name (B5).** `BleController.setScanHold(holder, active)`: the scan
+runs while any holder wants it and stops 2 s after the last one releases it. Holders are the
+device picker (`startScan`/`stopScan`), auto-reconnect, and the chat list and contacts screens
+while they are resumed (for presence). Results carry `lastSeenAt` and drop out after 30 s.
+
+**Presence (B5).** `PresenceTracker` maps each contact, through the address it was last
+reached at, to `Connected` (server client, or our connected central peer), `Nearby` (seen
+advertising in the last 30 s) or `NotNearby`.
+
+**"On screen" (E4, C3).** The chat screens report resume/pause to their ViewModel
+(`onVisibilityChanged`). While visible, the conversation raises no notifications and its
+existing one is cleared, and both roles send read receipts for what is showing.
 
 ## Navigation routes
 
@@ -162,7 +184,7 @@ conversation can only be answered through the role that owns the connection.
 | MTU | `requestMtu(517)` | Negotiated by CoreBluetooth |
 | Background | `BluechatService` foreground service | none yet |
 | Preferences | `SharedPreferences` (`bluechat_prefs`) | `NSUserDefaults` |
-| Notifications | `NotificationManager` | `UNUserNotificationCenter` |
+| Notifications | `AndroidMessageNotifier`: one `MessagingStyle` notification per conversation (tag = conversation id), tap opens the chat | `IosMessageNotifier`: grouped by `threadIdentifier`; asks for permission at start; tap does not open the chat yet |
 
 ## Wire protocol
 
@@ -266,7 +288,7 @@ Automated:
 
 ```bash
 ./gradlew :composeApp:assembleDebug
-./gradlew :shared:testDebugUnitTest                 # 67 tests
+./gradlew :shared:testDebugUnitTest                 # 88 tests
 ./gradlew :shared:compileKotlinIosSimulatorArm64
 ```
 

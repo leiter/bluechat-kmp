@@ -3,16 +3,19 @@ package com.bluechat.domain.messaging
 import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.domain.model.PeerMessage
+import com.bluechat.domain.notification.ConversationVisibility
 import com.bluechat.domain.notification.MessageNotifier
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.BlePeripheralServer
 import com.bluechat.domain.repository.ChatRepository
+import com.bluechat.domain.repository.ConversationRepository
 import com.bluechat.domain.repository.PeerDirectory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -30,6 +33,11 @@ import kotlin.time.Clock
  *
  * This collector is started once at app launch and lives for the whole process, so every
  * inbound message is persisted exactly once. ViewModels now only *read* from the database.
+ *
+ * It is also the one place that decides whether a message raises a notification (E4): not
+ * for a blocked sender, a muted conversation, or the conversation currently on screen.
+ *
+ * @param scope where the process-wide collectors run. Overridable for tests.
  */
 class IncomingMessageCoordinator(
     private val server: BlePeripheralServer,
@@ -37,9 +45,10 @@ class IncomingMessageCoordinator(
     private val chatRepository: ChatRepository,
     private val peerDirectory: PeerDirectory,
     private val messageNotifier: MessageNotifier,
+    private val conversationRepository: ConversationRepository,
+    private val conversationVisibility: ConversationVisibility,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var started = false
 
     fun start() {
@@ -57,6 +66,12 @@ class IncomingMessageCoordinator(
         )
             .onEach { (message, role) -> handle(message, role) }
             .catch { /* keep the process-wide collector alive */ }
+            .launchIn(scope)
+
+        // Opening a conversation clears its notification: the user is now reading it.
+        conversationVisibility.visible
+            .filterNotNull()
+            .onEach(messageNotifier::cancel)
             .launchIn(scope)
     }
 
@@ -116,12 +131,21 @@ class IncomingMessageCoordinator(
                 if (role == Role.SERVER) {
                     store(BROADCAST_DEVICE_ID, message.body, message.messageId)
                 }
-                messageNotifier.showMessageNotification(
-                    sender?.displayName ?: "Unknown",
-                    message.body,
-                )
+                notify(message.peerId, sender?.displayName ?: "Unknown", message.body)
             }
         }
+    }
+
+    private suspend fun notify(conversationId: String, senderName: String, text: String) {
+        // Already on screen: the message is visible, so a notification would only interrupt.
+        if (conversationVisibility.visible.value == conversationId) return
+        if (conversationRepository.isMuted(conversationId)) return
+        messageNotifier.showMessage(
+            conversationId = conversationId,
+            senderName = senderName,
+            text = text,
+            timestamp = Clock.System.now().toEpochMilliseconds(),
+        )
     }
 
     private suspend fun store(conversationId: String, text: String, messageId: String) {

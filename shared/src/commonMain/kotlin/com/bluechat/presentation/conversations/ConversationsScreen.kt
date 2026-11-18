@@ -40,6 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.bluechat.domain.model.Conversation
+import com.bluechat.domain.presence.Presence
+import com.bluechat.presentation.components.PresenceIndicator
 import com.bluechat.util.formatRelativeTime
 
 /**
@@ -110,6 +112,7 @@ fun ConversationsScreen(
                     items(state.visibleConversations, key = { it.conversationId }) { conversation ->
                         ConversationRow(
                             conversation = conversation,
+                            presence = state.presenceOf(conversation),
                             onClick = { onConversationClicked(conversation) },
                             onTogglePinned = {
                                 onTogglePinned(conversation.conversationId, !conversation.isPinned)
@@ -172,6 +175,7 @@ fun ConversationsScreen(
 @Composable
 private fun ConversationRow(
     conversation: Conversation,
+    presence: Presence,
     onClick: () -> Unit,
     onTogglePinned: () -> Unit,
     onToggleMuted: () -> Unit,
@@ -191,6 +195,10 @@ private fun ConversationRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (presence != Presence.NotNearby) {
+                        PresenceIndicator(presence)
+                        Spacer(Modifier.width(6.dp))
+                    }
                     if (conversation.isPinned) {
                         Text("📌", style = MaterialTheme.typography.bodySmall)
                         Spacer(Modifier.width(4.dp))

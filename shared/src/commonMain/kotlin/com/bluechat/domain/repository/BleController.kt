@@ -28,8 +28,22 @@ interface BleController {
      */
     val lastError: StateFlow<String?>
 
+    /**
+     * Starts or stops the device picker's scan. Shorthand for [setScanHold] with the picker as
+     * holder; starting also clears [lastError].
+     */
     fun startScan()
     fun stopScan()
+
+    /**
+     * Keeps the shared scan running while at least one holder wants it (B5).
+     *
+     * Several parts of the app need scan results at once: the device picker, auto-reconnect
+     * looking for a lost peer, and the chat list and contacts screens showing who is nearby.
+     * Each holds the scan under its own [holder] name and releases only its own hold, so one
+     * of them stopping can no longer kill another's scan.
+     */
+    fun setScanHold(holder: String, active: Boolean)
     fun clearError()
     suspend fun connect(deviceId: String)
     suspend fun disconnect()

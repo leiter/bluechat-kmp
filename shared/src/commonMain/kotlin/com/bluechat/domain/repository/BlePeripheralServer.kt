@@ -25,5 +25,11 @@ interface BlePeripheralServer {
     /** Sends to one client, addressed by its transport id. */
     suspend fun sendTo(transportId: String, messageId: String, body: String)
 
+    /**
+     * Tells one client we have read its message [messageId] (C3). Best effort: does nothing
+     * if that client is no longer connected.
+     */
+    suspend fun sendReadReceipt(transportId: String, messageId: String)
+
     fun release()
 }

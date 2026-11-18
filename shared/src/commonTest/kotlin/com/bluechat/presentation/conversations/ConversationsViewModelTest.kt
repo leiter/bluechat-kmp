@@ -2,6 +2,10 @@ package com.bluechat.presentation.conversations
 
 import app.cash.turbine.test
 import com.bluechat.domain.model.Conversation
+import com.bluechat.domain.presence.Presence
+import com.bluechat.domain.presence.PresenceTracker
+import com.bluechat.presentation.device.FakeBleController
+import com.bluechat.presentation.device.FakeContactRepository
 import com.bluechat.domain.model.ConnectedClient
 import com.bluechat.domain.model.PeerMessage
 import com.bluechat.domain.model.ServerState
@@ -39,10 +43,45 @@ class ConversationsViewModelTest {
         server = FakePeripheralServer()
     }
 
-    private fun createViewModel() = ConversationsViewModel(repository, server)
+    private val bleController = FakeBleController()
+    private val contacts = FakeContactRepository()
+
+    private fun createViewModel() = ConversationsViewModel(
+        conversationRepository = repository,
+        server = server,
+        presenceTracker = PresenceTracker(bleController, server, contacts, tickMillis = 0),
+        bleController = bleController,
+    )
 
     @AfterTest
     fun tearDown() = Dispatchers.resetMain()
+
+    @Test
+    fun `the chat list holds the scan only while it is visible`() = runTest {
+        val viewModel = createViewModel()
+
+        viewModel.onVisibilityChanged(true)
+        assertEquals(setOf("presence:conversations"), bleController.scanHolds)
+
+        viewModel.onVisibilityChanged(false)
+        assertTrue(bleController.scanHolds.isEmpty())
+    }
+
+    @Test
+    fun `the group thread counts as connected while any client is connected`() = runTest {
+        repository.set(conversation(Conversation.BROADCAST_ID).copy(isGroup = true))
+        server.setClients("AA:01")
+        val viewModel = createViewModel()
+        testDispatcher.scheduler.advanceUntilIdle()
+
+        viewModel.state.test {
+            awaitItem() // stateIn default
+            val state = awaitItem()
+            val group = state.conversations.single()
+            assertEquals(Presence.Connected, state.presenceOf(group))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 
     @Test
     fun `archived conversations are hidden from the main list but counted`() = runTest {
@@ -278,6 +317,8 @@ class FakeConversationRepository : ConversationRepository {
         update(conversationId) { it.copy(isArchived = archived) }
     }
 
+    override suspend fun isMuted(conversationId: String): Boolean = find(conversationId)?.isMuted == true
+
     override suspend fun delete(conversationId: String) {
         _conversations.value = _conversations.value.filterNot { it.conversationId == conversationId }
     }
@@ -293,7 +334,12 @@ class FakePeripheralServer : BlePeripheralServer {
     private val _connectedClients = MutableStateFlow<List<ConnectedClient>>(emptyList())
     override val connectedClients: StateFlow<List<ConnectedClient>> = _connectedClients
     override val serverState: StateFlow<ServerState> = MutableStateFlow(ServerState.Advertising)
-    override val incomingMessages: Flow<PeerMessage> = MutableSharedFlow()
+    private val _incomingMessages = MutableSharedFlow<PeerMessage>()
+    override val incomingMessages: Flow<PeerMessage> = _incomingMessages
+
+    suspend fun emitIncomingMessage(message: PeerMessage) {
+        _incomingMessages.emit(message)
+    }
 
     fun setClients(vararg identifiers: String) {
         _connectedClients.value = identifiers.map { ConnectedClient(it, null) }
@@ -305,5 +351,12 @@ class FakePeripheralServer : BlePeripheralServer {
     override fun stopAdvertising() {}
     override suspend fun sendTo(deviceId: String, messageId: String, body: String) {}
     override suspend fun sendToAll(messageId: String, body: String) {}
+
+    /** (transportId, messageId) of every read receipt sent. */
+    val sentReadReceipts = mutableListOf<Pair<String, String>>()
+
+    override suspend fun sendReadReceipt(transportId: String, messageId: String) {
+        sentReadReceipts += transportId to messageId
+    }
     override fun release() {}
 }

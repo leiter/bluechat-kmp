@@ -11,9 +11,10 @@ A device can act in either BLE role:
 
 On top of the transport the app is a regular chat app: a conversation list as the home
 screen, contacts tied to a stable per-install identity (not the MAC address), message
-history persisted in Room, delivery and read receipts, typing indicator, an outbox with
-retry, auto-reconnect, notifications, and an Android foreground service that keeps the
-session alive in the background.
+history persisted in Room, presence (who is connected or nearby right now), delivery and
+read receipts in both directions, typing indicator, an outbox with retry, auto-reconnect,
+per-conversation notifications that open the chat, and an Android foreground service that
+keeps the session alive in the background.
 
 ## Status
 

@@ -22,6 +22,9 @@ interface ConversationRepository {
 
     suspend fun setMuted(conversationId: String, muted: Boolean)
 
+    /** Whether [conversationId] is muted. A muted conversation raises no notification (E4). */
+    suspend fun isMuted(conversationId: String): Boolean
+
     suspend fun setArchived(conversationId: String, archived: Boolean)
 
     /**

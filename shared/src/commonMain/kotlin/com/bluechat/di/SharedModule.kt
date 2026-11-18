@@ -9,6 +9,8 @@ import com.bluechat.data.repository.ConversationRepositoryImpl
 import com.bluechat.data.repository.MessageQueueRepositoryImpl
 import com.bluechat.data.repository.PeerDirectoryImpl
 import com.bluechat.domain.messaging.IncomingMessageCoordinator
+import com.bluechat.domain.notification.ConversationVisibility
+import com.bluechat.domain.presence.PresenceTracker
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.domain.repository.ContactRepository
@@ -20,6 +22,7 @@ import com.bluechat.presentation.chat.ChatViewModel
 import com.bluechat.presentation.contacts.ContactsViewModel
 import com.bluechat.presentation.conversations.ConversationsViewModel
 import com.bluechat.presentation.device.DeviceViewModel
+import com.bluechat.presentation.navigation.ConversationDeepLinks
 import com.bluechat.presentation.server.BroadcastChatViewModel
 import com.bluechat.presentation.server.ServerChatViewModel
 import com.bluechat.presentation.server.ServerViewModel
@@ -42,13 +45,28 @@ val sharedModule = module {
     singleOf(::MessageQueueRepositoryImpl) bind MessageQueueRepository::class
     singleOf(::PeerDirectoryImpl) bind PeerDirectory::class
     singleOf(::KableCentralController) bind BleController::class
-    singleOf(::IncomingMessageCoordinator)
+    // Spelled out: singleOf would also try to inject the test-only `scope` parameter.
+    single {
+        IncomingMessageCoordinator(
+            server = get(),
+            bleController = get(),
+            chatRepository = get(),
+            peerDirectory = get(),
+            messageNotifier = get(),
+            conversationRepository = get(),
+            conversationVisibility = get(),
+        )
+    }
+    singleOf(::ConversationVisibility)
+    // Spelled out: singleOf would also try to inject the clock and tick parameters.
+    single { PresenceTracker(bleController = get(), server = get(), contactRepository = get()) }
+    singleOf(::ConversationDeepLinks)
     singleOf(::BleSessionMonitor)
 
     viewModelOf(::ContactsViewModel)
     viewModelOf(::ConversationsViewModel)
     viewModelOf(::DeviceViewModel)
-    viewModel { params -> ChatViewModel(params.get(), get(), get(), get(), get()) }
+    viewModel { params -> ChatViewModel(params.get(), get(), get(), get(), get(), get()) }
     viewModelOf(::ServerViewModel)
     viewModel { params -> ServerChatViewModel(params.get(), get(), get(), get(), get()) }
     viewModelOf(::BroadcastChatViewModel)

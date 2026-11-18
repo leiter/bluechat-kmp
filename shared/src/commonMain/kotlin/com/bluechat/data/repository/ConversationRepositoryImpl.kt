@@ -30,6 +30,10 @@ class ConversationRepositoryImpl(
         dao.setMuted(conversationId, muted)
     }
 
+    // No flags row means no flag has ever been set, i.e. not muted (C1).
+    override suspend fun isMuted(conversationId: String): Boolean =
+        dao.find(conversationId)?.isMuted == true
+
     override suspend fun setArchived(conversationId: String, archived: Boolean) {
         dao.setArchived(conversationId, archived)
     }

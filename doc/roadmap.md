@@ -4,7 +4,8 @@
 (`dev` was merged into `main` on 2026-11-18)
 
 **Done so far:** Phase A, E1, the Phase 9 merge (D1–D4 mostly, E2, part of E5), B1, B3, B4,
-C1, C2, C5, part of C3. **Next:** B2, B5, the rest of C3, then E4.
+B2, C1, C2, C3, C5, E4 (except direct reply), B5. **Next:** verify E4/B5/C3 on two phones,
+then F2 (iOS on a device).
 For the architecture as it stands, see [`plan.md`](plan.md), Part 1.
 
 **Starting point:** BLE messaging works end to end on Android — discovery, connect, both
@@ -96,10 +97,10 @@ A3 gates most of Phase D.
 | # | Task | Notes |
 |---|------|-------|
 | B1 | `Contact` entity + Room table | **DONE (2026-11-17).** `contacts` (schema v7) is the Phase A `peers` table grown up; `favorite_devices` is gone, absorbed rather than kept alongside. |
-| B2 | Add-contact flow | From a discovered device; auto-create on first successful exchange. |
+| B2 | Add-contact flow | **DONE by B1 (confirmed 2026-11-18).** Every peer becomes a contact on its first exchange (`PeerDirectory.remember` upserts on profile or message), and tapping a discovered device in the picker connects, which is that exchange. A stranger cannot be added *without* connecting, because a contact is keyed on the id the peer announces on connect. Considered and not chosen: an "Add" action that connects only to save, and a split between peers met and contacts saved. |
 | B3 | Contacts screen | **DONE (2026-11-18).** List, search, rename, favourite, block, delete. Reached from the chat list. |
 | B4 | Profile exchange | **DONE (2026-11-18).** The wire half already existed; B4 removed the adapter-name hijack that it made unnecessary (defect #7). |
-| B5 | Presence | In-range / out-of-range derived from scan results plus connection state. |
+| B5 | Presence | **DONE (2026-11-18).** `PresenceTracker` gives each contact `Connected` (a live link in either role), `Nearby` (advertising, seen in the last 30 s) or `NotNearby`. Chat list rows show a dot; contacts show "Connected", "Nearby" or "Last seen …". See below. |
 
 Phase 9 (merged) delivered a `favorite_devices` table with a star control and a Favourites
 section on the device list. That was not B1: it keyed on the **transport address**, not the
@@ -145,6 +146,26 @@ Two consequences worth recording:
   stopped: a server advertising "Pixel 2" still listed as "Bluechat" on a phone that had seen
   the old build. The scan record now wins, with the cache as fallback.
 
+**What B5 changed, beyond the indicator.**
+
+- **The scan is shared, with holders.** Presence is only useful with fresh scan results, so
+  the chat list and the contacts screen now scan while they are on screen. That collided with
+  the existing users of the one scanner: auto-reconnect called `startScan()`/`stopScan()` and
+  could stop the picker's scan, and vice versa. `BleController.setScanHold(holder, active)`
+  replaces that: the scan runs while any holder wants it and stops 2 s after the last one lets
+  go, so moving between two scanning screens does not restart it (Android silently stops
+  delivering results to an app that starts more than 5 scans in 30 s). Nothing scans in the
+  background on presence's behalf: the screens release their hold when paused.
+- **Scan results age out** (`BleDevice.lastSeenAt`, 30 s window) instead of being cleared on
+  every start. That closes **defect #12**: a peer that stopped advertising leaves the picker.
+- **Known limit:** contacts are matched to scan results by the address they were last reached
+  at. A peer whose address rotated shows as not nearby until the next connection records the
+  new address. Fixing that needs the peer id (or a hash of it) in the advertisement, which
+  the 31-byte budget makes a protocol change of its own.
+
+Verified: unit tests (`PresenceTrackerTest`, scan-hold and group-presence tests), Android
+build, iOS compile. Not yet verified on a phone.
+
 ---
 
 ## Phase C — Conversations
@@ -153,7 +174,7 @@ Two consequences worth recording:
 |---|------|-------|
 | C1 | `Conversation` entity | **DONE (2026-11-18).** Schema v8. Holds *only* pinned/muted/archived; `lastMessageAt`, preview and `unreadCount` are derived, not stored. |
 | C2 | **Chat list becomes the home screen** | **DONE (2026-11-18).** `startDestination` is `"conversations"`; the scanner is now a "New chat" picker. |
-| C3 | Unread tracking | **PARTLY DONE (2026-11-18).** Badge counts and per-row unread ship with C1; both chat screens now mark read on open. Still missing: server-side read *receipts*, so the peer is not told. |
+| C3 | Unread tracking | **DONE (2026-11-18).** Badge counts and per-row unread shipped with C1. C3 added **server-side read receipts** (`BlePeripheralServer.sendReadReceipt`): the server chat screen acknowledges a client's messages while it is on screen, so the client's own messages now reach `Read` too. Both sides now send receipts only while the chat is *visible* (resumed). Before, the client sent them whenever its ViewModel existed, including with the app in the background. Not covered: the server's Group Chat sends no receipts, since a mirrored message does not record which client sent it. Verified by unit tests (`ServerChatViewModelTest`); not yet on a phone. |
 | C4 | Pagination | `ChatMessageDao` returns the entire history as one `Flow<List<…>>` into a `LazyColumn`. Fine at 3 messages, not at 3,000. Room `PagingSource` + Paging 3. |
 | C5 | Delete conversation / clear history | **DONE (2026-11-18).** Long-press a chat → Delete. One transaction over messages, outbox and flags. |
 
@@ -164,9 +185,8 @@ Two consequences worth recording:
 - **D1. Delivery and read receipts.** **MOSTLY DONE** (Phase 9, merged). `DeliveryStatus` now
   carries `Queued`/`Delivered`/`Read`, and receipts ride the framed protocol as
   `Envelope.ReadReceipt`. Verified round trip: a message the server sent shows `Read` with
-  `readAt` set once the client has it on screen. Still missing: `Delivered` is never set (only
-  `Sent` then `Read`), and the server side does not send receipts for what it receives, so
-  acknowledgement is client-to-server only.
+  `readAt` set once the client has it on screen. Since C3 the server acknowledges too, so
+  receipts flow both ways. Still missing: `Delivered` is never set (only `Sent` then `Read`).
 - **D2. Outbox and retry.** **DONE** (Phase 9, merged). `pending_messages` plus
   `MessageQueueRepository`; the queue drains on reconnect. No tap-to-retry yet.
 - **D3. Day separators, message grouping, proper time formatting.** **DONE** (Phase 9, merged)
@@ -200,9 +220,27 @@ This is what makes the app *feel* like a chat app rather than a demo.
   explicitly told to be "Server Mode". A standard chat app is both roles at once, so any two
   installs simply talk. This is a genuine architectural change and should be decided early,
   because Phases B and C assume symmetry.
-- **E4. Notification fixes.** `notificationId++` means every message spawns a separate
-  notification, and there is no `contentIntent`, so tapping one does nothing. Use one
-  notification per conversation, `MessagingStyle`, a deep link into that chat, and direct reply.
+- **E4. Notification fixes.** **DONE except direct reply (2026-11-18).** Previously every
+  message spawned its own notification (`notificationId++`) with no `contentIntent`, so tapping
+  one did nothing. Now:
+  - one `MessagingStyle` notification per conversation, posted under the conversation id as tag.
+    Earlier messages are read back from the notification that is showing, so the notifier keeps
+    no state;
+  - tapping opens that conversation: `MainActivity` → `ConversationDeepLinks` → back to the chat
+    list → its own click handler, so the client/server screen choice (C2) is reused, not copied;
+  - no notification for the conversation on screen, and opening one clears its notification
+    (`ConversationVisibility`, driven by the chat screens' resume/pause);
+  - muted conversations (C1 flag) no longer notify. The flag was stored but ignored;
+  - `MessageNotifier` is an interface now (was `expect class`), so `IncomingMessageCoordinator`
+    finally has tests (7, plus 2 for visibility);
+  - iOS: notifications grouped per conversation (`threadIdentifier`) and cleared on open, and
+    the app now **asks for notification permission**. It never did, so iOS could not show any.
+
+  **Not done:** direct reply. Sending lives inside the chat ViewModels (the client one also
+  owns the outbox), so a reply from a notification first needs sending extracted into a shared
+  component. iOS tap-to-open needs a `UNUserNotificationCenterDelegate`. Both are in Deferred.
+  Verified: unit tests, Android build, iOS simulator build and launch. Not yet verified on a
+  phone.
 - **E5. Connection-state UX** — **PARTLY DONE** (Phase 9, merged): a reconnecting banner and a
   signal-strength indicator driven by RSSI polling. Still missing an in-app view of session
   state, which matters because Android 14+ lets the user swipe the foreground-service
@@ -240,13 +278,10 @@ This is what makes the app *feel* like a chat app rather than a demo.
 
 1. ~~**A1 + A2 + A3 as a single piece of work.**~~ Done.
 2. ~~**E1 (foreground service).**~~ Done.
-3. **B + C.** The visible chat-app shape, built on a foundation that will not need redoing.
-   Mostly done: B1, B3, B4, C1, C2 and C5 shipped on 2026-11-17/18. **Remaining:** B2
-   (add-contact flow), B5 (presence), C3 (server-side read receipts), and C4 (parked, see
-   Deferred).
-4. **E4 (notification fixes).** Still open. `MessageNotifier.android.kt` still uses
-   `notificationId++` with no `contentIntent`, so every message creates its own notification
-   and tapping one does nothing.
+3. ~~**B + C.**~~ Done (2026-11-17/18), except C4 (parked, see Deferred).
+4. ~~**E4 (notification fixes).**~~ Done (2026-11-18), except direct reply.
+5. **Next:** verify E4, B5 and C3 on two phones (none of them has run on a device yet), then
+   F2 (iOS on a device).
 
 ---
 
@@ -259,9 +294,10 @@ Tracked in claude-mem work state as `deferred-debts`, so it resurfaces at sessio
 | **Database durability: migrations, schemas, snapshots** | Not a concern while the only installs are the two test phones. | **F0 — release preparation.** See below; deliberately not touched before then. |
 | **C4 pagination** | A whole-history `Flow<List<…>>` into a `LazyColumn` is fine at 30 messages. | Histories in the hundreds, or a visible scroll stutter. |
 | **Seeded database fixtures** | Parked indefinitely (user, 2026-11-18). Every test builds its world from fakes; no test opens a real Room database. | No date. Revisit only if something a fixture would have caught actually bites — the `ConversationDao` summary join is the exposed surface. |
-| **Defect #12** | Scan list never cleared between scans; lives in the picker. | Still open after C2. |
 | **`DeliveryStatus.Delivered`** | Never set; the status jumps `Sent` → `Read`. | Needs a transport-level ack distinct from the read receipt. |
-| **Server-side read receipts** | Acknowledgement is client-to-server only. | E3 was decided *against*, so the asymmetry is permanent and this is a real gap. |
+| **Read receipts from the server's Group Chat** | A message mirrored into `broadcast` does not record which client sent it, so there is no one to address a receipt to. | If group chat gets real use: store the sender's peer id on mirrored rows. |
+| **E4 direct reply** | Needs sending pulled out of the chat ViewModels into a shared component first. | Do that extraction when a second caller (direct reply, or a share target) needs it. |
+| **iOS: open a conversation from a notification** | Needs a `UNUserNotificationCenterDelegate` in the Swift app, posting to `ConversationDeepLinks`. | With F2 (iOS parity). |
 | **Typing indicator on server screens** | Wired client-side only. | Cheap; fold into B/C when touching those screens. |
 | **D3 message grouping, D2 tap-to-retry** | Separators and relative times shipped; these did not. | Polish pass after C. |
 

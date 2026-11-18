@@ -209,6 +209,12 @@ class FakeBleController : BleController {
     }
 
     override fun startScan() {}
+    val scanHolds = mutableSetOf<String>()
+
+    override fun setScanHold(holder: String, active: Boolean) {
+        if (active) scanHolds += holder else scanHolds -= holder
+    }
+
     override fun stopScan() {}
     override fun clearError() { _lastError.value = null }
     override suspend fun connect(deviceId: String) { _connectedDeviceId.value = deviceId }
@@ -263,9 +269,13 @@ class FakeChatRepository : ChatRepository {
 
     override suspend fun getMessageByUuid(messageUuid: String): ChatMessage? = null
 
-    override suspend fun getUnreadMessages(deviceId: String): List<ChatMessage> = emptyList()
+    // Same rule as the DAO: inbound and not yet read.
+    override suspend fun getUnreadMessages(deviceId: String): List<ChatMessage> =
+        _messages.value.filter { it.deviceId == deviceId && !it.isFromLocalUser && it.readAt == null }
 
-    override suspend fun markMessageAsRead(id: Long, readAt: Long) {}
+    override suspend fun markMessageAsRead(id: Long, readAt: Long) {
+        _messages.value = _messages.value.map { if (it.id == id) it.copy(readAt = readAt) else it }
+    }
 
     override suspend fun deleteMessagesForDevice(deviceId: String) {
         _messages.value = _messages.value.filterNot { it.deviceId == deviceId }

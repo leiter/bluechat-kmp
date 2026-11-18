@@ -223,7 +223,7 @@ notification's Stop action.
 `isForeground=true types=0x00000010` and the Pixel 2 still discovered and connected to the
 backgrounded app.
 
-### 12. The scan list is never cleared between scans — OPEN, minor
+### 12. The scan list is never cleared between scans — FIXED (B5, 2026-11-18)
 
 **Where:** `DeviceViewModel` / `KableCentralController.scannedDevices`
 
@@ -234,6 +234,10 @@ stale state rather than a live advertisement.
 **Consequence:** the device list shows peers that are no longer reachable, and tapping one
 leads to a connect attempt that can only fail. Worth clearing on `startScan()`, and worth
 ageing entries out by `lastSeenAt` once B5 (presence) lands.
+
+**Fixed by:** B5. Every scan result now carries `lastSeenAt`, and the running scan drops
+entries not seen for 30 s (`BleDevice.NEARBY_WINDOW_MILLIS`). **Not yet re-verified on a
+device.**
 
 ---
 

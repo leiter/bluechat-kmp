@@ -4,17 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.DeliveryStatus
+import com.bluechat.domain.notification.ConversationVisibility
 import com.bluechat.domain.repository.BlePeripheralServer
 import com.bluechat.domain.repository.ChatRepository
-import com.bluechat.domain.repository.ConversationRepository
 import com.bluechat.domain.repository.PeerDirectory
 import com.bluechat.presentation.chat.ChatUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
@@ -29,8 +32,8 @@ class ServerChatViewModel(
     private val transportId: String,
     private val server: BlePeripheralServer,
     private val chatRepository: ChatRepository,
-    private val conversationRepository: ConversationRepository,
     private val peerDirectory: PeerDirectory,
+    private val conversationVisibility: ConversationVisibility,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -48,21 +51,6 @@ class ServerChatViewModel(
             isConnected = true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
-
-    init {
-        // Clears the unread badge for this conversation while it is open.
-        //
-        // Local only: the server still sends no read receipts, so the peer is not told. That
-        // gap predates C3 and is tracked separately -- but without this the badge introduced
-        // by C1 would stick on the server forever, since nothing else ever set `readAt` on an
-        // inbound message here.
-        //
-        // Must stay *below* `conversationKey`: an init block that reads a property declared
-        // later compiles fine but dereferences null if the coroutine ever starts eagerly.
-        viewModelScope.launch {
-            conversationRepository.markRead(conversationKey.first())
-        }
-    }
 
     // Incoming messages are persisted by IncomingMessageCoordinator for the whole process,
     // so this screen only has to read them back out of the database.
@@ -88,6 +76,48 @@ class ServerChatViewModel(
             } catch (_: Exception) {
                 chatRepository.updateMessageStatus(id, DeliveryStatus.Failed)
             }
+        }
+    }
+
+    private var visibilityJob: Job? = null
+
+    /**
+     * Called by the screen when it is resumed (true) or paused (false).
+     *
+     * While visible: no notifications for this conversation (E4), and everything the client
+     * sent that is on screen is marked read and acknowledged with a read receipt (C3), both
+     * when the screen opens and as new messages arrive. Paused, nothing is acknowledged:
+     * "read" means someone actually had it on screen.
+     */
+    fun onVisibilityChanged(visible: Boolean) {
+        visibilityJob?.cancel()
+        visibilityJob = if (visible) {
+            viewModelScope.launch {
+                conversationVisibility.track(conversationKey, this)
+                conversationKey
+                    .flatMapLatest(chatRepository::getMessagesForDevice)
+                    .onEach { acknowledgeUnread() }
+                    .launchIn(this)
+            }
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Marks every unread inbound message read and sends the client a receipt for each.
+     *
+     * Marked read even when the receipt cannot go out (client gone), so the unread badge
+     * does not stick. In practice this screen is only reachable for a connected client. A
+     * receipt lost that way leaves the client's message at Sent instead of Read.
+     */
+    private suspend fun acknowledgeUnread() {
+        val conversationId = conversationKey.first()
+        for (message in chatRepository.getUnreadMessages(conversationId)) {
+            if (message.messageUuid.isNotBlank()) {
+                runCatching { server.sendReadReceipt(transportId, message.messageUuid) }
+            }
+            chatRepository.markMessageAsRead(message.id, Clock.System.now().toEpochMilliseconds())
         }
     }
 

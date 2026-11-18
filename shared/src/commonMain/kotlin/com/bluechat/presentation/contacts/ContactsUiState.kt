@@ -1,10 +1,13 @@
 package com.bluechat.presentation.contacts
 
 import com.bluechat.domain.model.Contact
+import com.bluechat.domain.presence.Presence
 
 data class ContactsUiState(
     val contacts: List<Contact> = emptyList(),
     val query: String = "",
+    /** B5: presence per contact id. Absent means [Presence.NotNearby]. */
+    val presence: Map<String, Presence> = emptyMap(),
     val isLoaded: Boolean = false,
 ) {
     /**
@@ -24,6 +27,8 @@ data class ContactsUiState(
                     contact.contactId.contains(q, ignoreCase = true)
             }
         }
+
+    fun presenceOf(contact: Contact): Presence = presence[contact.contactId] ?: Presence.NotNearby
 
     val isEmpty: Boolean get() = isLoaded && contacts.isEmpty()
     val hasNoMatches: Boolean get() = isLoaded && contacts.isNotEmpty() && visibleContacts.isEmpty()

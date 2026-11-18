@@ -2,7 +2,9 @@ package com.bluechat
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -17,6 +19,7 @@ import com.bluechat.presentation.conversations.ConversationsScreen
 import com.bluechat.presentation.conversations.ConversationsViewModel
 import com.bluechat.presentation.device.DeviceScreen
 import com.bluechat.presentation.device.DeviceViewModel
+import com.bluechat.presentation.navigation.ConversationDeepLinks
 import com.bluechat.presentation.server.BroadcastChatViewModel
 import com.bluechat.presentation.server.ServerChatViewModel
 import com.bluechat.presentation.server.ServerScreen
@@ -24,6 +27,7 @@ import com.bluechat.presentation.server.ServerViewModel
 import com.bluechat.presentation.settings.SettingsScreen
 import com.bluechat.presentation.settings.SettingsViewModel
 import com.bluechat.ui.theme.BluechatTheme
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import androidx.savedstate.read
 import org.koin.core.parameter.parametersOf
@@ -41,6 +45,15 @@ fun App() {
 
     BluechatTheme(darkTheme = darkTheme) {
         val navController = rememberNavController()
+        val deepLinks = koinInject<ConversationDeepLinks>()
+        val pendingDeepLink by deepLinks.pending.collectAsStateWithLifecycle()
+
+        // E4: a tapped notification first returns to the chat list, which then opens the
+        // conversation itself (below), so it picks the client or server screen exactly as a
+        // tap in the list would.
+        LaunchedEffect(pendingDeepLink) {
+            if (pendingDeepLink != null) navController.popBackStack("conversations", inclusive = false)
+        }
 
         // C2: the app opens on conversations, not on a Bluetooth scanner. Finding a device is
         // now a deliberate step ("New chat") rather than the first thing the app demands.
@@ -48,10 +61,13 @@ fun App() {
             composable("conversations") {
                 val viewModel = koinViewModel<ConversationsViewModel>()
                 val state by viewModel.state.collectAsStateWithLifecycle()
+                // B5: scan for nearby contacts only while this screen is in front.
+                LifecycleResumeEffect(viewModel) {
+                    viewModel.onVisibilityChanged(true)
+                    onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+                }
 
-                ConversationsScreen(
-                    state = state,
-                    onConversationClicked = { conversation ->
+                val openConversation: (Conversation) -> Unit = { conversation ->
                         // A conversation is history, so it opens whether or not the peer is in
                         // range. The chat screen is what reports the live connection state, and
                         // the outbox is what holds anything sent while disconnected.
@@ -71,7 +87,20 @@ fun App() {
                             else ->
                                 navController.navigate("chat/${conversation.conversationId}")
                         }
-                    },
+                }
+
+                // Waits for the first database read, so a cold start from a notification
+                // still finds the conversation.
+                LaunchedEffect(pendingDeepLink, state.isLoaded) {
+                    val id = pendingDeepLink ?: return@LaunchedEffect
+                    if (!state.isLoaded) return@LaunchedEffect
+                    deepLinks.consume(id)
+                    state.conversations.find { it.conversationId == id }?.let(openConversation)
+                }
+
+                ConversationsScreen(
+                    state = state,
+                    onConversationClicked = openConversation,
                     onNewChat = { navController.navigate("devices") },
                     onTogglePinned = viewModel::togglePinned,
                     onToggleMuted = viewModel::toggleMuted,
@@ -111,6 +140,10 @@ fun App() {
                 val deviceId = backStackEntry.arguments?.read { getStringOrNull("deviceId") } ?: return@composable
                 val viewModel = koinViewModel<ChatViewModel>(parameters = { parametersOf(deviceId) })
                 val state by viewModel.state.collectAsStateWithLifecycle()
+                LifecycleResumeEffect(viewModel) {
+                    viewModel.onVisibilityChanged(true)
+                    onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+                }
 
                 ChatScreen(
                     state = state,
@@ -148,6 +181,10 @@ fun App() {
                 val clientId = backStackEntry.arguments?.read { getStringOrNull("clientId") } ?: return@composable
                 val viewModel = koinViewModel<ServerChatViewModel>(parameters = { parametersOf(clientId) })
                 val state by viewModel.state.collectAsStateWithLifecycle()
+                LifecycleResumeEffect(viewModel) {
+                    viewModel.onVisibilityChanged(true)
+                    onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+                }
 
                 ChatScreen(
                     state = state,
@@ -176,6 +213,10 @@ fun App() {
             composable("contacts") {
                 val viewModel = koinViewModel<ContactsViewModel>()
                 val state by viewModel.state.collectAsStateWithLifecycle()
+                LifecycleResumeEffect(viewModel) {
+                    viewModel.onVisibilityChanged(true)
+                    onPauseOrDispose { viewModel.onVisibilityChanged(false) }
+                }
 
                 ContactsScreen(
                     state = state,

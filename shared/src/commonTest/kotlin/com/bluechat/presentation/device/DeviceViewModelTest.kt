@@ -387,6 +387,12 @@ class FakeBleController : BleController {
         scanStarted = true
     }
 
+    val scanHolds = mutableSetOf<String>()
+
+    override fun setScanHold(holder: String, active: Boolean) {
+        if (active) scanHolds += holder else scanHolds -= holder
+    }
+
     override fun stopScan() {
         scanStopped = true
     }

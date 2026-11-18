@@ -6,6 +6,7 @@ import com.bluechat.domain.model.ChatMessage
 import com.bluechat.domain.model.ConnectionState
 import com.bluechat.domain.model.DeliveryStatus
 import com.bluechat.domain.model.PeerMessage
+import com.bluechat.domain.notification.ConversationVisibility
 import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ChatRepository
 import com.bluechat.domain.repository.MessageQueueRepository
@@ -41,6 +42,7 @@ class ChatViewModel(
     private val chatRepository: ChatRepository,
     private val peerDirectory: PeerDirectory,
     private val messageQueueRepository: MessageQueueRepository,
+    private val conversationVisibility: ConversationVisibility,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatUiState())
@@ -99,20 +101,12 @@ class ChatViewModel(
             .map { it == ConnectionState.Connected }
             .distinctUntilChanged()
             .onEach { isConnected ->
-                if (isConnected) {
-                    sendQueuedMessages()
-                    acknowledgeUnreadMessages()
-                }
+                if (isConnected) sendQueuedMessages()
             }
             .launchIn(viewModelScope)
 
-        // Having the conversation on screen is what "read" means, so acknowledge whatever is
-        // showing as soon as it arrives.
-        messages
-            .onEach { if (bleController.connectionState.value == ConnectionState.Connected) {
-                acknowledgeUnreadMessages()
-            } }
-            .launchIn(viewModelScope)
+        // Read receipts are sent from onVisibilityChanged, not here: this ViewModel outlives
+        // the screen being visible (app in background), and "read" means on screen.
     }
 
     fun sendMessage(text: String) {
@@ -200,6 +194,33 @@ class ChatViewModel(
         if (isCurrentlyTyping == isTyping) return
         isCurrentlyTyping = isTyping
         viewModelScope.launch { runCatching { bleController.sendTypingIndicator(isTyping) } }
+    }
+
+    private var visibilityJob: Job? = null
+
+    /**
+     * Called by the screen when it is resumed (true) or paused (false).
+     *
+     * While visible, this conversation raises no notifications and its existing one is
+     * cleared (E4), and whatever the peer sent is acknowledged with read receipts: on open,
+     * as new messages arrive, and when a connection comes up while the screen is showing.
+     * Before C3 receipts went out whenever this ViewModel existed, including while the app
+     * sat in the background on this chat.
+     */
+    fun onVisibilityChanged(visible: Boolean) {
+        visibilityJob?.cancel()
+        visibilityJob = if (visible) {
+            viewModelScope.launch {
+                conversationVisibility.track(conversationKey, this)
+                combine(messages, bleController.connectionState) { _, state -> state }
+                    .onEach { state ->
+                        if (state == ConnectionState.Connected) acknowledgeUnreadMessages()
+                    }
+                    .launchIn(this)
+            }
+        } else {
+            null
+        }
     }
 
     fun disconnect() {

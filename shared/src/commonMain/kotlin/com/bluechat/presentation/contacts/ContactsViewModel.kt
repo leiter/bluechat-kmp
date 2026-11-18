@@ -2,6 +2,8 @@ package com.bluechat.presentation.contacts
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.bluechat.domain.presence.PresenceTracker
+import com.bluechat.domain.repository.BleController
 import com.bluechat.domain.repository.ContactRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -12,6 +14,8 @@ import kotlinx.coroutines.launch
 
 class ContactsViewModel(
     private val contactRepository: ContactRepository,
+    presenceTracker: PresenceTracker,
+    private val bleController: BleController,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ContactsUiState())
@@ -19,9 +23,19 @@ class ContactsViewModel(
     val state = combine(
         _state,
         contactRepository.observeAll(),
-    ) { state, contacts ->
-        state.copy(contacts = contacts, isLoaded = true)
+        presenceTracker.observe(),
+    ) { state, contacts, presence ->
+        state.copy(contacts = contacts, presence = presence, isLoaded = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ContactsUiState())
+
+    /** See [com.bluechat.presentation.conversations.ConversationsViewModel.onVisibilityChanged]. */
+    fun onVisibilityChanged(visible: Boolean) {
+        bleController.setScanHold(SCAN_HOLDER, visible)
+    }
+
+    override fun onCleared() {
+        bleController.setScanHold(SCAN_HOLDER, false)
+    }
 
     fun onQueryChanged(query: String) {
         _state.update { it.copy(query = query) }
@@ -47,5 +61,9 @@ class ContactsViewModel(
      */
     fun delete(contactId: String) {
         viewModelScope.launch { contactRepository.delete(contactId) }
+    }
+
+    private companion object {
+        const val SCAN_HOLDER = PresenceTracker.SCAN_HOLDER_PREFIX + "contacts"
     }
 }
